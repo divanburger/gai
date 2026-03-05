@@ -7,6 +7,7 @@ import glsl "core:math/linalg/glsl"
 import SDL "vendor:sdl3"
 import GL "vendor:OpenGL"
 import stbi "vendor:stb/image"
+import ef   "vendor:stb/easy_font"
 
 WINDOW_TITLE  :: "Bouncing Ball"
 WINDOW_WIDTH  :: 800
@@ -28,6 +29,9 @@ BLOCK_H      :: 14.0
 BLOCK_GAP_X  :: 3.0
 BLOCK_GAP_Y  :: 5.0
 BLOCK_AREA_Y :: 40.0
+
+GAME_NAME  :: "gai"
+TEXT_SCALE :: f32(3)
 
 VERT_SRC :: `#version 330 core
 layout(location = 0) in vec2 a_offset;
@@ -245,6 +249,41 @@ main :: proc() {
 	GL.EnableVertexAttribArray(0)
 	GL.BindVertexArray(0)
 
+	text_vao, text_vbo: u32
+	GL.GenVertexArrays(1, &text_vao)
+	GL.GenBuffers(1, &text_vbo)
+	defer GL.DeleteVertexArrays(1, &text_vao)
+	defer GL.DeleteBuffers(1, &text_vbo)
+
+	text_vert_count: int
+	{
+		text_w := f32(ef.width(GAME_NAME)) * TEXT_SCALE
+		text_x := (f32(WINDOW_WIDTH) - text_w) / 2
+		text_y := f32(10)
+
+		quads: [256]ef.Quad
+		num_quads := ef.print(text_x, text_y, GAME_NAME, {255, 255, 255, 255}, quads[:], TEXT_SCALE)
+
+		verts: [256 * 6]glsl.vec2
+		for i in 0..<num_quads {
+			q := quads[i]
+			verts[text_vert_count+0] = {q.tl.v[0], q.tl.v[1]}
+			verts[text_vert_count+1] = {q.tr.v[0], q.tr.v[1]}
+			verts[text_vert_count+2] = {q.bl.v[0], q.bl.v[1]}
+			verts[text_vert_count+3] = {q.tr.v[0], q.tr.v[1]}
+			verts[text_vert_count+4] = {q.br.v[0], q.br.v[1]}
+			verts[text_vert_count+5] = {q.bl.v[0], q.bl.v[1]}
+			text_vert_count += 6
+		}
+
+		GL.BindVertexArray(text_vao)
+		GL.BindBuffer(GL.ARRAY_BUFFER, text_vbo)
+		GL.BufferData(GL.ARRAY_BUFFER, text_vert_count * size_of(glsl.vec2), &verts, GL.STATIC_DRAW)
+		GL.VertexAttribPointer(0, 2, GL.FLOAT, false, size_of(glsl.vec2), 0)
+		GL.EnableVertexAttribArray(0)
+		GL.BindVertexArray(0)
+	}
+
 	GL.UseProgram(program)
 	loc_center     := GL.GetUniformLocation(program, "u_center")
 	loc_resolution := GL.GetUniformLocation(program, "u_resolution")
@@ -374,6 +413,10 @@ main :: proc() {
 			GL.BindVertexArray(block_vao)
 			GL.DrawArrays(GL.TRIANGLES, 0, i32(block_vert_count))
 		}
+
+		// Draw game name
+		GL.BindVertexArray(text_vao)
+		GL.DrawArrays(GL.TRIANGLES, 0, i32(text_vert_count))
 
 		if should_screenshot {
 			take_screenshot(&screenshot_counter)
