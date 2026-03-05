@@ -11,10 +11,15 @@ import stbi "vendor:stb/image"
 WINDOW_TITLE  :: "Bouncing Ball"
 WINDOW_WIDTH  :: 800
 WINDOW_HEIGHT :: 600
-BALL_RADIUS   :: 30.0
-BALL_SPEED    :: glsl.vec2{250.0, 180.0}
-SEGMENTS      :: 64
-VERTEX_COUNT  :: SEGMENTS + 2
+BALL_RADIUS    :: 30.0
+BALL_SPEED     :: glsl.vec2{250.0, 180.0}
+SEGMENTS       :: 64
+VERTEX_COUNT   :: SEGMENTS + 2
+
+PADDLE_WIDTH   :: 120.0
+PADDLE_HEIGHT  :: 15.0
+PADDLE_SPEED   :: 500.0
+PADDLE_Y       :: f32(WINDOW_HEIGHT) - 60.0
 
 VERT_SRC :: `#version 330 core
 layout(location = 0) in vec2 a_offset;
@@ -174,13 +179,28 @@ main :: proc() {
 	GL.EnableVertexAttribArray(0)
 	GL.BindVertexArray(0)
 
+	paddle_vao, paddle_vbo: u32
+	GL.GenVertexArrays(1, &paddle_vao)
+	GL.GenBuffers(1, &paddle_vbo)
+	defer GL.DeleteVertexArrays(1, &paddle_vao)
+	defer GL.DeleteBuffers(1, &paddle_vbo)
+
+	GL.BindVertexArray(paddle_vao)
+	GL.BindBuffer(GL.ARRAY_BUFFER, paddle_vbo)
+	GL.BufferData(GL.ARRAY_BUFFER, 4 * size_of(glsl.vec2), nil, GL.DYNAMIC_DRAW)
+	GL.VertexAttribPointer(0, 2, GL.FLOAT, false, size_of(glsl.vec2), 0)
+	GL.EnableVertexAttribArray(0)
+	GL.BindVertexArray(0)
+
 	GL.UseProgram(program)
 	loc_center     := GL.GetUniformLocation(program, "u_center")
 	loc_resolution := GL.GetUniformLocation(program, "u_resolution")
 	GL.Uniform2f(loc_resolution, WINDOW_WIDTH, WINDOW_HEIGHT)
 
-	ball_pos := glsl.vec2{WINDOW_WIDTH / 2.0, WINDOW_HEIGHT / 2.0}
-	ball_vel := BALL_SPEED
+	ball_pos  := glsl.vec2{WINDOW_WIDTH / 2.0, WINDOW_HEIGHT / 2.0}
+	ball_vel  := BALL_SPEED
+	paddle_x  := f32(WINDOW_WIDTH) / 2.0
+	left_held, right_held := false, false
 
 	prev_counter := SDL.GetPerformanceCounter()
 	freq         := SDL.GetPerformanceFrequency()
@@ -204,6 +224,13 @@ main :: proc() {
 			#partial switch event.key.scancode {
 			case .ESCAPE:      running = false
 			case .PRINTSCREEN: should_screenshot = true
+			case .LEFT:        left_held  = true
+			case .RIGHT:       right_held = true
+			}
+		case .KEY_UP:
+			#partial switch event.key.scancode {
+			case .LEFT:  left_held  = false
+			case .RIGHT: right_held = false
 			}
 			}
 		}
@@ -218,7 +245,22 @@ main :: proc() {
 			}
 		}
 
+		if left_held  { paddle_x -= PADDLE_SPEED * dt }
+		if right_held { paddle_x += PADDLE_SPEED * dt }
+		paddle_x = clamp(paddle_x, PADDLE_WIDTH / 2, f32(WINDOW_WIDTH) - PADDLE_WIDTH / 2)
+
 		ball_pos += ball_vel * dt
+
+		// Paddle collision: ball bottom hits paddle top
+		paddle_top := PADDLE_Y - PADDLE_HEIGHT / 2
+		if ball_vel.y > 0 &&
+		   ball_pos.y + BALL_RADIUS >= paddle_top &&
+		   ball_pos.y - BALL_RADIUS <= PADDLE_Y + PADDLE_HEIGHT / 2 &&
+		   ball_pos.x + BALL_RADIUS >= paddle_x - PADDLE_WIDTH / 2 &&
+		   ball_pos.x - BALL_RADIUS <= paddle_x + PADDLE_WIDTH / 2 {
+			ball_pos.y = paddle_top - BALL_RADIUS
+			ball_vel.y = -abs(ball_vel.y)
+		}
 
 		if ball_pos.x - BALL_RADIUS < 0             { ball_pos.x = BALL_RADIUS;                ball_vel.x =  abs(ball_vel.x) }
 		if ball_pos.x + BALL_RADIUS > WINDOW_WIDTH  { ball_pos.x = WINDOW_WIDTH - BALL_RADIUS; ball_vel.x = -abs(ball_vel.x) }
@@ -231,6 +273,21 @@ main :: proc() {
 		GL.Uniform2f(loc_center, ball_pos.x, ball_pos.y)
 		GL.BindVertexArray(vao)
 		GL.DrawArrays(GL.TRIANGLE_FAN, 0, VERTEX_COUNT)
+
+		// Draw paddle: upload corners as actual screen positions, center uniform zeroed
+		hw := f32(PADDLE_WIDTH  / 2)
+		hh := f32(PADDLE_HEIGHT / 2)
+		paddle_verts := [4]glsl.vec2{
+			{paddle_x - hw, PADDLE_Y - hh},
+			{paddle_x + hw, PADDLE_Y - hh},
+			{paddle_x - hw, PADDLE_Y + hh},
+			{paddle_x + hw, PADDLE_Y + hh},
+		}
+		GL.BindBuffer(GL.ARRAY_BUFFER, paddle_vbo)
+		GL.BufferSubData(GL.ARRAY_BUFFER, 0, size_of(paddle_verts), &paddle_verts)
+		GL.Uniform2f(loc_center, 0, 0)
+		GL.BindVertexArray(paddle_vao)
+		GL.DrawArrays(GL.TRIANGLE_STRIP, 0, 4)
 
 		if should_screenshot {
 			take_screenshot(&screenshot_counter)
