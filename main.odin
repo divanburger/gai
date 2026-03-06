@@ -48,6 +48,7 @@ update :: proc(
 	prev_counter:       ^u64,
 	freq:                u64,
 	running:            ^bool,
+	waiting_to_start:   ^bool,
 	paused:             ^bool,
 	opts:               ^Options,
 	left_held:          ^bool,
@@ -68,12 +69,19 @@ update :: proc(
 		case .QUIT, .WINDOW_CLOSE_REQUESTED:
 			running^ = false
 		case .KEY_DOWN:
-			#partial switch event.key.scancode {
-			case .ESCAPE:      running^ = false
-			case .PAUSE, .P:   paused^ = !paused^
-			case .PRINTSCREEN: should_screenshot^ = true
-			case .LEFT:        left_held^  = true
-			case .RIGHT:       right_held^ = true
+			if waiting_to_start^ {
+				#partial switch event.key.scancode {
+				case .ESCAPE: running^ = false
+				case:         waiting_to_start^ = false
+				}
+			} else {
+				#partial switch event.key.scancode {
+				case .ESCAPE:      running^ = false
+				case .PAUSE, .P:   paused^ = !paused^
+				case .PRINTSCREEN: should_screenshot^ = true
+				case .LEFT:        left_held^  = true
+				case .RIGHT:       right_held^ = true
+				}
 			}
 		case .KEY_UP:
 			#partial switch event.key.scancode {
@@ -93,7 +101,7 @@ update :: proc(
 		}
 	}
 
-	if !paused^ {
+	if !paused^ && !waiting_to_start^ {
 		if left_held^  { state.paddle.pos.x -= PADDLE_SPEED * dt }
 		if right_held^ { state.paddle.pos.x += PADDLE_SPEED * dt }
 		state.paddle.pos.x = clamp(state.paddle.pos.x, PADDLE_SIZE.x / 2, f32(WINDOW_WIDTH) - PADDLE_SIZE.x / 2)
@@ -135,8 +143,9 @@ update :: proc(
 			if state.lives <= 0 {
 				running^ = false
 			} else {
-				state.ball.pos = {state.paddle.pos.x, state.paddle.pos.y - PADDLE_SIZE.y/2 - state.ball.radius - 5}
-				state.ball.vel = {BALL_SPEED.x, -abs(BALL_SPEED.y)}
+				state.ball.pos  = {state.paddle.pos.x, state.paddle.pos.y - PADDLE_SIZE.y/2 - state.ball.radius - 5}
+				state.ball.vel  = {BALL_SPEED.x, -abs(BALL_SPEED.y)}
+				waiting_to_start^ = true
 			}
 		}
 	} // end !paused
@@ -166,7 +175,12 @@ update :: proc(
 		}
 	}
 
-	if paused^ {
+	if waiting_to_start^ {
+		msg   := "Press any key to start"
+		msg_w := f32(ef.width(msg)) * TEXT_SCALE
+		msg_pos := vec2{(f32(WINDOW_WIDTH) - msg_w) / 2, (f32(WINDOW_HEIGHT) - 8 * TEXT_SCALE) / 2}
+		draw_text(r, msg, msg_pos, TEXT_SCALE, WHITE)
+	} else if paused^ {
 		draw_rect(r, Rect{min = {0, 0}, max = {WINDOW_WIDTH, WINDOW_HEIGHT}}, Color{0, 0, 0, 0.6})
 		paused_text := "PAUSED"
 		paused_w    := f32(ef.width(paused_text)) * TEXT_SCALE
@@ -228,6 +242,7 @@ main :: proc() {
 	}
 	for &b in state.blocks { b = true }
 
+	waiting_to_start   := true
 	paused             := false
 	prev_counter       := SDL.GetPerformanceCounter()
 	freq               := SDL.GetPerformanceFrequency()
@@ -241,7 +256,7 @@ main :: proc() {
 		renderer_start_frame(&r)
 		update(
 			&prev_counter, freq,
-			&running, &paused,
+			&running, &waiting_to_start, &paused,
 			&opts,
 			&left_held, &right_held,
 			&state,
