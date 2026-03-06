@@ -5,6 +5,7 @@ import glsl "core:math/linalg/glsl"
 vec2  :: glsl.vec2
 ivec2 :: glsl.ivec2
 vec4  :: glsl.vec4
+Color :: glsl.vec4
 
 Rect :: struct {
 	min, max: vec2,
@@ -14,6 +15,7 @@ Circle :: struct {
 	pos:    vec2,
 	radius: f32,
 }
+
 
 // Signed distance between two rects.
 // Negative = penetrating, zero = touching, positive = gap.

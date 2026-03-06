@@ -23,11 +23,18 @@ void main() {
     frag_color = u_color;
 }`
 
+BLACK  :: Color{0, 0, 0, 1}
+WHITE  :: Color{1, 1, 1, 1}
+RED    :: Color{1, 0, 0, 1}
+GREEN  :: Color{0, 1, 0, 1}
+BLUE   :: Color{0, 0, 1, 1}
+YELLOW :: Color{1, 1, 0, 1}
+
 DrawCall :: struct {
 	prim_type:  u32,
 	vert_start: i32,
 	vert_count: i32,
-	color:      vec4,
+	color:      Color,
 }
 
 MAX_VERTS     :: 8192
@@ -170,7 +177,7 @@ renderer_end_frame :: proc(r: ^Renderer, screenshot_counter: ^int, should_screen
 	SDL.GL_SwapWindow(window)
 }
 
-draw_rect :: proc(r: ^Renderer, rect: Rect, color: vec4) {
+draw_rect :: proc(r: ^Renderer, rect: Rect, color: Color) {
 	start := i32(r.vert_count)
 	r.verts[r.vert_count+0] = rect.min
 	r.verts[r.vert_count+1] = {rect.max.x, rect.min.y}
@@ -183,7 +190,7 @@ draw_rect :: proc(r: ^Renderer, rect: Rect, color: vec4) {
 	r.call_count += 1
 }
 
-draw_circle :: proc(r: ^Renderer, circle: Circle, color: vec4) {
+draw_circle :: proc(r: ^Renderer, circle: Circle, color: Color) {
 	start := i32(r.vert_count)
 	r.verts[r.vert_count] = circle.pos
 	r.vert_count += 1
@@ -198,7 +205,7 @@ draw_circle :: proc(r: ^Renderer, circle: Circle, color: vec4) {
 	r.call_count += 1
 }
 
-draw_text :: proc(r: ^Renderer, text: string, pos: vec2, scale: f32, color: vec4) {
+draw_text :: proc(r: ^Renderer, text: string, pos: vec2, scale: f32, color: Color) {
 	start := i32(r.vert_count)
 	quads: [256]ef.Quad
 	num_quads := ef.print(pos.x, pos.y, text, {255, 255, 255, 255}, quads[:], scale)

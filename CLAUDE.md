@@ -150,6 +150,20 @@ dt  := f32(now - prev) / f32(freq)
 prev = now
 ```
 
+## Memory Management
+
+Three lifecycles govern object lifetimes:
+
+| Lifecycle | Duration | Allocator |
+|-----------|----------|-----------|
+| Frame | One iteration of the main loop | `context.temp_allocator` — reset at the start of every frame |
+| Level | One level/stage (may not exist yet) | TBD |
+| Active game | From game start to game over (may not exist yet) | TBD |
+
+### Frame allocator
+
+`free_all(context.temp_allocator)` is called at the top of the main loop before any per-frame work. Use `context.temp_allocator` for any scratch data that only needs to survive one frame (e.g. formatted strings, temporary buffers).
+
 ## Bounce Logic
 
 Clamp-then-force-direction prevents the ball from getting stuck inside a wall:
