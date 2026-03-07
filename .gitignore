@@ -1,2 +1,3 @@
 main
 screenshots/
+tests/**/*.png
