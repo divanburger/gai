@@ -3,6 +3,7 @@ package main
 import "core:encoding/json"
 import "core:os"
 import "core:slice"
+import "core:strconv"
 import "core:strings"
 import SDL "vendor:sdl3"
 
@@ -15,6 +16,7 @@ TestEvent :: struct {
 TestScript :: struct {
 	settings:  Maybe(Settings),
 	level_idx: Maybe(int),
+	pause_sim: bool,
 	events:    []TestEvent,
 	next:      int,
 }
@@ -22,6 +24,7 @@ TestScript :: struct {
 TestScriptFile :: struct {
 	settings:  Maybe(Settings),
 	level_idx: Maybe(int),
+	pause_sim: bool,
 	events:    [dynamic]TestEvent,
 }
 
@@ -32,10 +35,10 @@ test_script_load :: proc(path: string) -> (script: TestScript, ok: bool) {
 	file: TestScriptFile
 	json.unmarshal(data, &file)
 	slice.sort_by(file.events[:], proc(a, b: TestEvent) -> bool { return a.at < b.at })
-	return TestScript{settings = file.settings, level_idx = file.level_idx, events = file.events[:]}, true
+	return TestScript{settings = file.settings, level_idx = file.level_idx, pause_sim = file.pause_sim, events = file.events[:]}, true
 }
 
-test_script_pump :: proc(s: ^TestScript, elapsed: f32, should_screenshot: ^bool, running: ^bool) {
+test_script_pump :: proc(s: ^TestScript, elapsed: f32, should_screenshot: ^bool, running: ^bool, sim_steps_requested: ^int) {
 	for s.next < len(s.events) {
 		ev := s.events[s.next]
 		if elapsed < ev.at { break }
@@ -46,6 +49,16 @@ test_script_pump :: proc(s: ^TestScript, elapsed: f32, should_screenshot: ^bool,
 		}
 		if ev.key == "quit" {
 			running^ = false
+			continue
+		}
+		if ev.key == "step" || strings.has_prefix(ev.key, "step ") {
+			n := 1
+			if len(ev.key) > 5 {
+				if parsed, parse_ok := strconv.parse_int(ev.key[5:]); parse_ok {
+					n = parsed
+				}
+			}
+			sim_steps_requested^ += n
 			continue
 		}
 		cname    := strings.clone_to_cstring(ev.key, context.temp_allocator)

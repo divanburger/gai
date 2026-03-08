@@ -9,10 +9,10 @@ A game built from scratch in Odin using SDL3 and OpenGL.
 /home/divan/git/odin/odin run .
 
 # Build binary
-/home/divan/git/odin/odin build . -out:main
+/home/divan/git/odin/odin build . -out:main -vet-style -vet-unused
 
 # Optimized build
-/home/divan/git/odin/odin build . -o:speed -out:main
+/home/divan/git/odin/odin build . -o:speed -out:main -vet-style -vet-unused
 ```
 
 ## Debugging
@@ -99,6 +99,9 @@ GL.load_up_to(3, 3, SDL.gl_set_proc_address)
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `--test-script` | `string` | `""` (disabled) | Path to a test script JSON file to replay |
+| `--pause-sim` | `bool` | `false` | Start with simulation paused (advance via `step` commands) |
+| `--quit-on-complete` | `bool` | `false` | Quit when a level is completed |
+| `--quit-on-gameover` | `bool` | `false` | Quit on game over |
 
 ```sh
 ./main --test-script tests/options.json

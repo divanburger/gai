@@ -1,0 +1,7 @@
+{
+  "settings": {"display_mode": "Windowed", "resolution_idx": 2},
+  "events": [
+    {"at": 0.05, "key": "screenshot"},
+    {"at": 0.06, "key": "quit"}
+  ]
+}
