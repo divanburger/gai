@@ -15,6 +15,7 @@ Ball :: struct {
 	dir:         vec2,  // unit direction vector; velocity = dir * effective_ball_speed
 	locked:      bool,
 	lock_offset: vec2,  // offset from paddle center when sticky-locked
+	ghost_timer: f32,   // seconds remaining as ghost (newly split balls); 0 = normal
 }
 
 Paddle :: struct {
@@ -30,8 +31,6 @@ Level :: struct {
 	blocks:       [BLOCK_COLS * BLOCK_ROWS]Block,
 	playing_area: Rect,
 }
-
-MAX_BALLS :: 6
 
 ItemKind :: enum { ExtraLife, ExtraBall, WidePaddle, NarrowPaddle, StickyPaddle, FastBall, SlowBall }
 
@@ -49,7 +48,7 @@ DurationType :: enum { Instant, Timed, Level }
 
 ITEM_DURATIONS :: [ItemKind]DurationType{
 	.ExtraLife    = .Instant,
-	.ExtraBall    = .Timed,
+	.ExtraBall    = .Instant,
 	.WidePaddle   = .Timed,
 	.NarrowPaddle = .Timed,
 	.StickyPaddle = .Timed,
@@ -59,18 +58,13 @@ ITEM_DURATIONS :: [ItemKind]DurationType{
 
 ITEM_TIMERS :: [ItemKind]f32{
 	.ExtraLife    = 0,
-	.ExtraBall    = 15,
-	.WidePaddle   = 10,
-	.NarrowPaddle = 8,
-	.StickyPaddle = 12,
-	.FastBall     = 10,
-	.SlowBall     = 10,
+	.ExtraBall    = EFFECT_TIMER_EXTRA_BALL,
+	.WidePaddle   = EFFECT_TIMER_WIDE_PADDLE,
+	.NarrowPaddle = EFFECT_TIMER_NARROW_PADDLE,
+	.StickyPaddle = EFFECT_TIMER_STICKY_PADDLE,
+	.FastBall     = EFFECT_TIMER_FAST_BALL,
+	.SlowBall     = EFFECT_TIMER_SLOW_BALL,
 }
-
-MAX_DROPS       :: 16
-ITEM_DROP_CHANCE :: f32(0.25)
-ITEM_FALL_SPEED  :: f32(100)
-ITEM_SIZE        :: vec2{20, 20}
 
 ItemDrop :: struct {
 	pos:    vec2,
@@ -94,6 +88,7 @@ LevelState :: struct {
 RunState :: struct {
 	lives:     int,
 	level_idx: int,
+	run_score: int,
 }
 
 // JSON file shapes
@@ -187,14 +182,7 @@ level_state_init :: proc(s: ^LevelState, level: Level) {
 	s.level      = level
 	s.paddle     = {pos = {GAME_SIZE.x / 2, PADDLE_Y}}
 	s.balls      = make([dynamic]Ball, 0, MAX_BALLS)
-	lock_x := PADDLE_SIZE.x * 0.2
-	lock_t := lock_x / (PADDLE_SIZE.x / 2)
-	lock_y := paddle_surface_y(0, PADDLE_SIZE.y / 2, lock_t) - BALL_RADIUS
-	append(&s.balls, Ball{
-		circle      = {pos = s.paddle.pos + {lock_x, lock_y}, radius = BALL_RADIUS},
-		locked      = true,
-		lock_offset = {lock_x, lock_y},
-	})
+	spawn_locked_ball(s, PADDLE_SIZE.x)
 }
 
 add_effect :: proc(state: ^LevelState, kind: ItemKind) {
@@ -210,15 +198,28 @@ has_effect :: proc(state: ^LevelState, kind: ItemKind) -> bool {
 
 effective_paddle_width :: proc(state: ^LevelState) -> f32 {
 	w := PADDLE_SIZE.x
-	if has_effect(state, .WidePaddle)   { w *= 1.5 }
-	if has_effect(state, .NarrowPaddle) { w *= 0.7 }
+	if has_effect(state, .WidePaddle)   { w *= PADDLE_WIDE_MULT }
+	if has_effect(state, .NarrowPaddle) { w *= PADDLE_NARROW_MULT }
 	return w
 }
 
 
+// Spawn a ball locked to the paddle at a slight horizontal offset.
+spawn_locked_ball :: proc(s: ^LevelState, paddle_width: f32) {
+	lock_x := paddle_width * 0.2
+	lock_t := lock_x / (paddle_width / 2)
+	lock_y := paddle_surface_y(0, PADDLE_SIZE.y / 2, lock_t) - BALL_RADIUS
+	append(&s.balls, Ball{
+		circle      = {pos = s.paddle.pos + {lock_x, lock_y}, radius = BALL_RADIUS},
+		locked      = true,
+		lock_offset = {lock_x, lock_y},
+	})
+}
+
 run_state_init :: proc(run: ^RunState, ls: ^LevelState, levels: []Level) {
 	run.lives     = STARTING_LIVES
 	run.level_idx = 0
+	run.run_score = 0
 	level_state_init(ls, levels[0])
 }
 

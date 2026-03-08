@@ -26,9 +26,10 @@ StdinReader :: struct {
 	t:          ^thread.Thread,
 }
 
-stdin_reader_init :: proc(sr: ^StdinReader) {
+stdin_reader_init :: proc(sr: ^StdinReader) -> bool {
 	sr^ = {}
 	sr.t = thread.create_and_start_with_data(sr, stdin_reader_thread_proc)
+	return true
 }
 
 stdin_reader_destroy :: proc(sr: ^StdinReader) {
@@ -142,12 +143,12 @@ stdin_reader_pump :: proc(sr: ^StdinReader, should_screenshot: ^bool, running: ^
 			for i in 0..<BLOCK_COLS * BLOCK_ROWS {
 				if state.blocks[i].lives > 0 { blocks_remaining += 1 }
 			}
-			game_log(state, fmt.tprintf("state screen=%v playing=%v lives=%d score=%d blocks=%d paddle_x=%.1f paddle_y=%.1f ball_count=%d",
-				gs.screen, gs.playing_state, run.lives, state.score, blocks_remaining,
+			game_log(state, fmt.tprintf("state screen=%v playing=%v lives=%d score=%d run_score=%d blocks=%d paddle_x=%.1f paddle_y=%.1f ball_count=%d",
+				gs.screen, gs.playing_state, run.lives, state.score, run.run_score, blocks_remaining,
 				state.paddle.pos.x, state.paddle.pos.y, len(state.balls)))
 			for b, i in state.balls {
-				game_log(state, fmt.tprintf("ball idx=%d x=%.1f y=%.1f dx=%.2f dy=%.2f locked=%v",
-					i, b.pos.x, b.pos.y, b.dir.x, b.dir.y, b.locked))
+				game_log(state, fmt.tprintf("ball idx=%d x=%.1f y=%.1f dx=%.2f dy=%.2f locked=%v ghost=%.2f",
+					i, b.pos.x, b.pos.y, b.dir.x, b.dir.y, b.locked, b.ghost_timer))
 			}
 		case .Blocks:
 			for row in 0..<BLOCK_ROWS {

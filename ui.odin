@@ -1,6 +1,5 @@
 package main
 
-import "core:fmt"
 
 BUTTON_BORDER      :: f32(12)
 WINDOW_BORDER      :: f32(34)   // top row height in screen pixels (matches WINDOW_SPLITS_Y[0])
@@ -12,32 +11,9 @@ BUTTON_SPACING     :: f32(16)
 BUTTON_SELECT_TINT :: Color{0.68, 0.88, 1.0, 1.0}   // light-blue tint applied to selected button
 BUTTON_DEPTH_PX    :: f32(8)                         // shadow rows unique to depth texture (y=56-63)
 
-// Explicit nine-patch split points for button_square_depth.png (64×64).
-// Screw circles at all four corners: x=8-11 / x=52-55, y=8-11 / y=48-51.
-// Fixed zones (0-15 and 48-63 on each axis) capture all screws; only the 32px middles stretch.
-// Bottom zone (y=44-63) also captures the shadow rows (y=56-63).
-BUTTON_SEL_SPLITS_X :: [2]f32{16, 48}
-BUTTON_SEL_SPLITS_Y :: [2]f32{16, 44}
-
-// Explicit nine-patch split points for button_square_header_blade_square_screws.png (64×64).
-// Left col 0-13px (13px) stretches only the 7px middle strip; right col 20-64px (44px) is
-// fixed to preserve the blade shape. Top row 0-34px captures the full blue header; bottom
-// row 50-64px (14px) holds the screw decorations.
-WINDOW_SPLITS_X :: [2]f32{13, 20}
-WINDOW_SPLITS_Y :: [2]f32{34, 50}
-
-UIInput :: struct {
-	mouse_pos:      vec2,
-	mouse_clicked:  bool,
-	left_pressed:   bool,
-	right_pressed:  bool,
-}
-
 UI :: struct {
-	button_tex:     Texture,
-	button_sel_tex: Texture,
-	window_tex:     Texture,
-	input:          UIInput,
+	assets:         ^AssetSystem,
+	input:          ^Input,
 	cursor:         vec2,
 	line_height:    f32,
 	indent:         f32,
@@ -45,20 +21,12 @@ UI :: struct {
 	_row_max_height: f32,
 }
 
-ui_load :: proc() -> (ui: UI, ok: bool) {
-	ui.button_tex     = texture_load("assets/ui/button_square.png") or_return
-	ui.button_sel_tex = texture_load("assets/ui/button_square_depth.png") or_return
-	ui.window_tex     = texture_load("assets/ui/button_square_header_blade_square_screws.png") or_return
-	return ui, true
+ui_init :: proc(ui: ^UI, assets: ^AssetSystem) -> bool {
+	ui.assets = assets
+	return true
 }
 
-ui_destroy :: proc(ui: ^UI) {
-	texture_destroy(&ui.button_tex)
-	texture_destroy(&ui.button_sel_tex)
-	texture_destroy(&ui.window_tex)
-}
-
-ui_begin :: proc(ui: ^UI, input: UIInput) {
+ui_begin :: proc(ui: ^UI, input: ^Input) {
 	ui.input       = input
 	ui.cursor      = {ui.indent, 0}
 	ui.line_height = 0
@@ -97,7 +65,10 @@ ui_spacing :: proc(ui: ^UI, amount: f32) {
 // button_sel_tex and BUTTON_SEL_SPLITS_* are loaded/defined for future use.
 ui_button_render :: proc(r: ^Renderer, ui: UI, rect: Rect, label: string, selected: bool = false) {
 	tint := BUTTON_SELECT_TINT if selected else WHITE
-	draw_nine_patch(r, rect, ui.button_tex, BUTTON_BORDER, tint)
+	a := asset_get(ui.assets, "button")
+	if a != nil {
+		draw_nine_patch(r, rect, a.texture, a.nine_patch.border, tint)
+	}
 	draw_text_rect(r, r.ui_font, label, rect, BLACK)
 }
 
@@ -109,7 +80,10 @@ ui_button_render :: proc(r: ^Renderer, ui: UI, rect: Rect, label: string, select
 //   • the 14px bottom row is fixed, preserving the screw decorations
 // Returns the usable content rect (header and padding subtracted).
 ui_window_render :: proc(r: ^Renderer, ui: UI, rect: Rect, label: string) -> Rect {
-	draw_nine_patch_splits(r, rect, ui.window_tex, WINDOW_SPLITS_X, WINDOW_SPLITS_Y)
+	a := asset_get(ui.assets, "window")
+	if a != nil {
+		draw_nine_patch_splits(r, rect, a.texture, a.nine_patch.splits_x, a.nine_patch.splits_y)
+	}
 	content := rect
 	header := cut_top(&content, WINDOW_BORDER)
 	content = shrink_rect(content, WINDOW_PAD)
@@ -123,45 +97,70 @@ ui_window_render :: proc(r: ^Renderer, ui: UI, rect: Rect, label: string) -> Rec
 // New generic widgets
 // ---------------------------------------------------------------------------
 
+// ui_inlay_render draws a recessed panel (panel nine-patch) with centered text.
+ui_inlay_render :: proc(r: ^Renderer, ui: UI, rect: Rect, text: string, color: Color = BLACK) {
+	a := asset_get(ui.assets, "inlay")
+	if a != nil {
+		draw_nine_patch(r, rect, a.texture, a.nine_patch.border)
+	}
+	draw_text_rect(r, r.ui_font, text, rect, color)
+}
+
+SELECTOR_ARROW_W :: f32(36)  // width of the < and > arrow buttons
+SELECTOR_GAP     :: f32(6)   // gap between arrow buttons and inlay
+
 // ui_selector renders a labelled left/right arrow selector.
+// Layout: LABEL (on background)  [<] [ inlay value ] [>]
 // Returns -1 for left press, +1 for right press, 0 for no change.
 // Keyboard input (Left/Right) is consumed only when selected=true.
-ui_selector :: proc(r: ^Renderer, ui: ^UI, label: string, value: string, selected: bool = false) -> (changed: int) {
+ui_selector :: proc(r: ^Renderer, ui: ^UI, label: string, value: string, total_w: f32, selected: bool = false, label_w: f32 = 0) -> (changed: int) {
 	text_h := r.ui_font.size
 	btn_h  := text_h + BUTTON_PAD_Y * 2
 
-	// Build display string "< value >" into a stack buffer.
-	dbuf: [256]u8
-	display_str := fmt.bprintf(dbuf[:], "< %s >", value)
+	// Label on the left, drawn directly on window background (light grey)
+	SELECTOR_LABEL_SELECTED :: Color{0.15, 0.4, 0.7, 1}  // dark blue for readability on light bg
+	label_color := SELECTOR_LABEL_SELECTED if selected else BLACK
+	label_y := ui.cursor.y + (btn_h - text_h) / 2
+	draw_text(r, r.ui_font, label, {ui.cursor.x, label_y}, label_color, .Left)
 
-	label_w   := text_width(r.ui_font, label)
-	display_w := text_width(r.ui_font, display_str)
-	total_w   := label_w + BUTTON_PAD_X + display_w + BUTTON_PAD_X * 2
+	// Right-aligned controls: [<] [inlay] [>]
+	lw         := label_w if label_w > 0 else text_width(r.ui_font, label)
+	controls_x := ui.cursor.x + lw + BUTTON_PAD_X
 
-	rect := Rect{
-		min = ui.cursor,
-		max = ui.cursor + {total_w, btn_h},
+	// Inlay width fills the remaining space between the two arrow buttons
+	inlay_w := total_w - lw - BUTTON_PAD_X - SELECTOR_ARROW_W * 2 - SELECTOR_GAP * 2
+
+	// Left arrow button
+	left_rect := Rect{
+		min = {controls_x, ui.cursor.y},
+		max = {controls_x + SELECTOR_ARROW_W, ui.cursor.y + btn_h},
 	}
+	ui_button_render(r, ui^, left_rect, "<", selected)
 
-	tint := BUTTON_SELECT_TINT if selected else WHITE
-	draw_nine_patch(r, rect, ui.button_tex, BUTTON_BORDER, tint)
+	// Inlay with value
+	inlay_x := controls_x + SELECTOR_ARROW_W + SELECTOR_GAP
+	inlay_rect := Rect{
+		min = {inlay_x, ui.cursor.y},
+		max = {inlay_x + inlay_w, ui.cursor.y + btn_h},
+	}
+	ui_inlay_render(r, ui^, inlay_rect, value)
 
-	text_y := rect.min.y + (btn_h - text_h) / 2
-	draw_text(r, r.ui_font, label,       {rect.min.x + BUTTON_PAD_X, text_y}, BLACK, .Left)
-	draw_text(r, r.ui_font, display_str, {rect.max.x - BUTTON_PAD_X, text_y}, BLACK, .Right)
+	// Right arrow button
+	right_x := inlay_x + inlay_w + SELECTOR_GAP
+	right_rect := Rect{
+		min = {right_x, ui.cursor.y},
+		max = {right_x + SELECTOR_ARROW_W, ui.cursor.y + btn_h},
+	}
+	ui_button_render(r, ui^, right_rect, ">", selected)
 
-	// Click zones: left half of display area = left arrow, right half = right arrow.
-	mid_x     := rect.max.x - display_w/2 - BUTTON_PAD_X
-	left_zone  := Rect{min = {rect.max.x - display_w - BUTTON_PAD_X*2, rect.min.y}, max = {mid_x, rect.max.y}}
-	right_zone := Rect{min = {mid_x, rect.min.y}, max = rect.max}
-
+	// Click detection
 	if ui.input.mouse_clicked {
-		if point_inside_rect(ui.input.mouse_pos, left_zone)  { changed = -1 }
-		if point_inside_rect(ui.input.mouse_pos, right_zone) { changed =  1 }
+		if point_inside_rect(ui.input.mouse_pos, left_rect)  { changed = -1 }
+		if point_inside_rect(ui.input.mouse_pos, right_rect) { changed =  1 }
 	}
 	if selected {
-		if ui.input.left_pressed  { changed = -1 }
-		if ui.input.right_pressed { changed =  1 }
+		if ui.input.keys[.LEFT].went_down  { changed = -1 }
+		if ui.input.keys[.RIGHT].went_down { changed =  1 }
 	}
 
 	ui.cursor.y    += btn_h + BUTTON_SPACING

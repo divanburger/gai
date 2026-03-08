@@ -1,0 +1,33 @@
+[
+	{
+		"path": "assets/ui/button_square.png",
+		"name": "button",
+		"type": "nine_patch",
+		"border": 12
+	},
+	{
+		"path": "assets/ui/button_square_depth.png",
+		"name": "button_sel",
+		"type": "nine_patch",
+		"splits_x": [16, 48],
+		"splits_y": [16, 44]
+	},
+	{
+		"path": "assets/ui/button_square_header_blade_square_screws.png",
+		"name": "window",
+		"type": "nine_patch",
+		"splits_x": [13, 20],
+		"splits_y": [34, 50]
+	},
+	{
+		"path": "assets/ui/panel_square.png",
+		"name": "inlay",
+		"type": "nine_patch",
+		"border": 10
+	},
+	{
+		"path": "assets/patterns/pattern_07.png",
+		"name": "bg_pattern",
+		"type": "image"
+	}
+]

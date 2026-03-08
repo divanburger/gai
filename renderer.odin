@@ -96,10 +96,12 @@ Renderer :: struct {
 	verts:            [dynamic]Vertex,
 	calls:            [dynamic]DrawCall,
 	window_size:      ivec2,
+	viewport_offset:  vec2,
+	viewport_scale:   f32,
 	clear_color:      Color,
 	font:             Font,
 	ui_font:          Font,
-	bg_pattern:       Texture,
+	item_icons:       [ItemKind]Texture,
 }
 
 compile_shader_program :: proc(vert_src, frag_src: string) -> (program: u32, ok: bool) {
@@ -215,11 +217,13 @@ font_destroy :: proc(f: ^Font) {
 	}
 }
 
-renderer_init :: proc() -> (r: Renderer, ok: bool) {
+renderer_init :: proc(r: ^Renderer) -> bool {
 	stbi.flip_vertically_on_write(true)
 	stbi.set_flip_vertically_on_load(1)
 
-	r.program = compile_shader_program(VERT_SRC, FRAG_SRC) or_return
+	program, program_ok := compile_shader_program(VERT_SRC, FRAG_SRC)
+	if !program_ok { return false }
+	r.program = program
 
 	GL.Enable(GL.BLEND)
 	GL.BlendFunc(GL.SRC_ALPHA, GL.ONE_MINUS_SRC_ALPHA)
@@ -263,15 +267,26 @@ renderer_init :: proc() -> (r: Renderer, ok: bool) {
 		fmt.eprintln("renderer_init: failed to load UI font")
 	}
 
-	// Load background pattern texture with GL_REPEAT for tiling
-	if pat, pat_ok := texture_load("assets/patterns/pattern_07.png"); pat_ok {
-		r.bg_pattern = pat
-		GL.BindTexture(GL.TEXTURE_2D, r.bg_pattern.id)
-		GL.TexParameteri(GL.TEXTURE_2D, GL.TEXTURE_WRAP_S, GL.REPEAT)
-		GL.TexParameteri(GL.TEXTURE_2D, GL.TEXTURE_WRAP_T, GL.REPEAT)
+	// Load or generate item icon textures
+	icon_paths := [ItemKind]string{
+		.ExtraLife    = "assets/icons/extra_life.png",
+		.ExtraBall   = "assets/icons/extra_ball.png",
+		.WidePaddle  = "assets/icons/wide_paddle.png",
+		.NarrowPaddle = "assets/icons/narrow_paddle.png",
+		.StickyPaddle = "assets/icons/sticky_paddle.png",
+		.FastBall    = "assets/icons/fast_ball.png",
+		.SlowBall    = "assets/icons/slow_ball.png",
+	}
+	for kind in ItemKind {
+		if tex, tex_ok := texture_load_silent(icon_paths[kind]); tex_ok {
+			r.item_icons[kind] = tex
+		} else {
+			// Generate a simple procedural icon as fallback
+			r.item_icons[kind] = generate_item_icon(kind)
+		}
 	}
 
-	return r, true
+	return true
 }
 
 renderer_set_window_size :: proc(r: ^Renderer, size: ivec2) {
@@ -281,6 +296,8 @@ renderer_set_window_size :: proc(r: ^Renderer, size: ivec2) {
 	vp_h  := i32(GAME_SIZE.y * scale)
 	vp_x  := (size.x - vp_w) / 2
 	vp_y  := (size.y - vp_h) / 2
+	r.viewport_offset = {f32(vp_x), f32(vp_y)}
+	r.viewport_scale  = scale
 	GL.Viewport(vp_x, vp_y, vp_w, vp_h)
 }
 
@@ -292,7 +309,9 @@ renderer_destroy :: proc(r: ^Renderer) {
 	delete(r.calls)
 	font_destroy(&r.font)
 	font_destroy(&r.ui_font)
-	texture_destroy(&r.bg_pattern)
+	for kind in ItemKind {
+		texture_destroy(&r.item_icons[kind])
+	}
 }
 
 renderer_start_frame :: proc(r: ^Renderer) {
@@ -380,6 +399,28 @@ draw_circle :: proc(r: ^Renderer, circle: Circle, color: Color) {
 	}
 	append(&r.verts, r.verts[int(start)+1])
 	append(&r.calls, DrawCall{GL.TRIANGLE_FAN, start, VERTEX_COUNT, color, {}, 0, false})
+}
+
+// draw_triangle renders a filled triangle from three points.
+draw_triangle :: proc(r: ^Renderer, a, b, c: vec2, color: Color) {
+	start := i32(len(r.verts))
+	append(&r.verts, Vertex{a, {}}, Vertex{b, {}}, Vertex{c, {}})
+	append(&r.calls, DrawCall{GL.TRIANGLES, start, 3, color, {}, 0, false})
+}
+
+// draw_line renders a line between two points with a given width.
+draw_line :: proc(r: ^Renderer, line: Line, width: f32, color: Color) {
+	d := line.end - line.start
+	l := glsl.length(d)
+	if l == 0 { return }
+	perp := vec2{-d.y, d.x} / l * (width * 0.5)
+	a := line.start + perp
+	b := line.start - perp
+	c := line.end   - perp
+	d2 := line.end  + perp
+	start := i32(len(r.verts))
+	append(&r.verts, Vertex{a, {}}, Vertex{b, {}}, Vertex{c, {}}, Vertex{a, {}}, Vertex{c, {}}, Vertex{d2, {}})
+	append(&r.calls, DrawCall{GL.TRIANGLES, start, 6, color, {}, 0, false})
 }
 
 TextAlign  :: enum { Left, Center, Right }
@@ -500,6 +541,113 @@ texture_load :: proc(path: string) -> (t: Texture, ok: bool) {
 	return t, true
 }
 
+// texture_load_silent is like texture_load but does not print an error on failure.
+texture_load_silent :: proc(path: string) -> (t: Texture, ok: bool) {
+	buf: [512]u8
+	fmt.bprintf(buf[:], "%s\x00", path)
+
+	w, h, channels: c.int
+	data := stbi.load(cstring(raw_data(buf[:])), &w, &h, &channels, 4)
+	if data == nil { return {}, false }
+	defer stbi.image_free(data)
+
+	GL.GenTextures(1, &t.id)
+	GL.BindTexture(GL.TEXTURE_2D, t.id)
+	GL.TexImage2D(GL.TEXTURE_2D, 0, GL.RGBA, w, h, 0, GL.RGBA, GL.UNSIGNED_BYTE, data)
+	GL.TexParameteri(GL.TEXTURE_2D, GL.TEXTURE_MIN_FILTER, GL.NEAREST)
+	GL.TexParameteri(GL.TEXTURE_2D, GL.TEXTURE_MAG_FILTER, GL.NEAREST)
+	GL.TexParameteri(GL.TEXTURE_2D, GL.TEXTURE_WRAP_S, GL.CLAMP_TO_EDGE)
+	GL.TexParameteri(GL.TEXTURE_2D, GL.TEXTURE_WRAP_T, GL.CLAMP_TO_EDGE)
+
+	t.size = {i32(w), i32(h)}
+	return t, true
+}
+
+// generate_item_icon creates a simple 16x16 white-on-transparent procedural icon
+// for use when PNG icons are not available.
+generate_item_icon :: proc(kind: ItemKind) -> Texture {
+	SIZE :: 16
+	pixels: [SIZE * SIZE * 4]u8
+
+	// Helper to set a pixel (white with full alpha)
+	set :: proc(pixels: ^[SIZE * SIZE * 4]u8, x, y: int) {
+		SIZE :: 16
+		if x < 0 || x >= SIZE || y < 0 || y >= SIZE { return }
+		idx := (y * SIZE + x) * 4
+		pixels[idx]     = 255
+		pixels[idx + 1] = 255
+		pixels[idx + 2] = 255
+		pixels[idx + 3] = 255
+	}
+
+	switch kind {
+	case .ExtraLife:
+		// Heart shape
+		for y in 0..<SIZE {
+			for x in 0..<SIZE {
+				fx := f32(x) - 7.5
+				fy := f32(y) - 7.5
+				fx2 := fx * fx
+				fy_adj := fy + 2
+				heart := (fx2 + fy_adj * fy_adj - 20) * (fx2 + fy_adj * fy_adj - 20) * (fx2 + fy_adj * fy_adj - 20) - fx2 * fy_adj * fy_adj * fy_adj
+				if heart < 0 { set(&pixels, x, y) }
+			}
+		}
+	case .ExtraBall:
+		// Circle
+		for y in 0..<SIZE {
+			for x in 0..<SIZE {
+				dx := f32(x) - 7.5
+				dy := f32(y) - 7.5
+				if dx*dx + dy*dy <= 25 { set(&pixels, x, y) }
+			}
+		}
+	case .WidePaddle:
+		// Wide horizontal arrows pointing outward: <-->
+		for x in 3..<13 { set(&pixels, x, 7); set(&pixels, x, 8) }
+		set(&pixels, 4, 6); set(&pixels, 3, 7); set(&pixels, 4, 9)
+		set(&pixels, 11, 6); set(&pixels, 12, 7); set(&pixels, 11, 9)
+	case .NarrowPaddle:
+		// Narrow horizontal arrows pointing inward
+		for x in 3..<13 { set(&pixels, x, 7); set(&pixels, x, 8) }
+		set(&pixels, 5, 6); set(&pixels, 6, 7); set(&pixels, 5, 9)
+		set(&pixels, 10, 6); set(&pixels, 9, 7); set(&pixels, 10, 9)
+	case .StickyPaddle:
+		// Droplet / glue shape
+		for y in 0..<SIZE {
+			for x in 0..<SIZE {
+				dx := f32(x) - 7.5
+				dy := f32(y) - 7.5
+				if dy > 0 && dx*dx + dy*dy <= 20 { set(&pixels, x, y) }
+				if dy <= 0 && abs(dx) <= -dy * 0.6 + 2 { set(&pixels, x, y) }
+			}
+		}
+	case .FastBall:
+		// Double right chevron >>
+		for i in 0..<6 {
+			set(&pixels, 3 + i, 5 + i); set(&pixels, 3 + i, 11 - i)
+			set(&pixels, 7 + i, 5 + i); set(&pixels, 7 + i, 11 - i)
+		}
+	case .SlowBall:
+		// Pause bars ||
+		for y in 4..<12 {
+			set(&pixels, 5, y); set(&pixels, 6, y)
+			set(&pixels, 9, y); set(&pixels, 10, y)
+		}
+	}
+
+	t: Texture
+	t.size = {SIZE, SIZE}
+	GL.GenTextures(1, &t.id)
+	GL.BindTexture(GL.TEXTURE_2D, t.id)
+	GL.TexImage2D(GL.TEXTURE_2D, 0, GL.RGBA, SIZE, SIZE, 0, GL.RGBA, GL.UNSIGNED_BYTE, raw_data(pixels[:]))
+	GL.TexParameteri(GL.TEXTURE_2D, GL.TEXTURE_MIN_FILTER, GL.NEAREST)
+	GL.TexParameteri(GL.TEXTURE_2D, GL.TEXTURE_MAG_FILTER, GL.NEAREST)
+	GL.TexParameteri(GL.TEXTURE_2D, GL.TEXTURE_WRAP_S, GL.CLAMP_TO_EDGE)
+	GL.TexParameteri(GL.TEXTURE_2D, GL.TEXTURE_WRAP_T, GL.CLAMP_TO_EDGE)
+	return t
+}
+
 texture_destroy :: proc(t: ^Texture) {
 	GL.DeleteTextures(1, &t.id)
 	t.id = 0
@@ -511,32 +659,7 @@ texture_destroy :: proc(t: ^Texture) {
 draw_nine_patch :: proc(r: ^Renderer, rect: Rect, texture: Texture, border: f32, color: Color = WHITE) {
 	tw := f32(texture.size.x)
 	th := f32(texture.size.y)
-
-	// destination breakpoints
-	dx := [4]f32{rect.min.x, rect.min.x + border, rect.max.x - border, rect.max.x}
-	dy := [4]f32{rect.min.y, rect.min.y + border, rect.max.y - border, rect.max.y}
-	// UV breakpoints (y flipped: image top = UV y=1)
-	ux := [4]f32{0, border / tw, 1 - border/tw, 1}
-	uy := [4]f32{1, 1 - border/th, border / th, 0}
-
-	start := i32(len(r.verts))
-	for row in 0..<3 {
-		for col in 0..<3 {
-			x0, x1 := dx[col], dx[col+1]
-			y0, y1 := dy[row], dy[row+1]
-			u0, u1 := ux[col], ux[col+1]
-			v0, v1 := uy[row], uy[row+1]
-			append(&r.verts,
-				Vertex{{x0, y0}, {u0, v0}},
-				Vertex{{x1, y0}, {u1, v0}},
-				Vertex{{x0, y1}, {u0, v1}},
-				Vertex{{x1, y0}, {u1, v0}},
-				Vertex{{x1, y1}, {u1, v1}},
-				Vertex{{x0, y1}, {u0, v1}},
-			)
-		}
-	}
-	append(&r.calls, DrawCall{GL.TRIANGLES, start, 54, color, {}, texture.id, false})
+	draw_nine_patch_splits(r, rect, texture, {border, tw - border}, {border, th - border}, color)
 }
 
 // draw_nine_patch_splits renders a nine-patch with explicit per-axis split pixels.
@@ -659,23 +782,25 @@ draw_block_damage :: proc(r: ^Renderer, rect: Rect, damage_level: int) {
 
 // draw_two_tone_tiled renders a tiled texture across rect with two-tone color mapping.
 // tile_size controls the screen-space size of one texture repetition.
-draw_two_tone_tiled :: proc(r: ^Renderer, rect: Rect, texture: Texture, tile_size: f32, color_a, color_b: Color) {
+draw_two_tone_tiled :: proc(r: ^Renderer, rect: Rect, texture: Texture, tile_size: f32, color_a, color_b: Color, uv_offset: vec2 = {}) {
 	size := rect.max - rect.min
 	// UV goes from 0 to (size/tile_size) so the texture tiles across the rect
-	u1 := size.x / tile_size
-	v1 := size.y / tile_size
+	u0 := uv_offset.x
+	v0 := uv_offset.y
+	u1 := u0 + size.x / tile_size
+	v1 := v0 + size.y / tile_size
 	start := i32(len(r.verts))
 	tl := rect.min
 	tr := vec2{rect.max.x, rect.min.y}
 	bl := vec2{rect.min.x, rect.max.y}
 	br := rect.max
 	append(&r.verts,
-		Vertex{tl, {0,  v1}},
+		Vertex{tl, {u0, v1}},
 		Vertex{tr, {u1, v1}},
-		Vertex{bl, {0,  0}},
+		Vertex{bl, {u0, v0}},
 		Vertex{tr, {u1, v1}},
-		Vertex{br, {u1, 0}},
-		Vertex{bl, {0,  0}},
+		Vertex{br, {u1, v0}},
+		Vertex{bl, {u0, v0}},
 	)
 	append(&r.calls, DrawCall{GL.TRIANGLES, start, 6, color_a, color_b, texture.id, true})
 }

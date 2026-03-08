@@ -4,6 +4,8 @@
     {"at": 0.05, "key": "Down"},
     {"at": 0.10, "key": "Return"},
     {"at": 0.20, "key": "screenshot"},
-    {"at": 0.21, "key": "quit"}
+    {"at": 0.25, "key": "Right"},
+    {"at": 0.30, "key": "screenshot"},
+    {"at": 0.31, "key": "quit"}
   ]
 }

@@ -1,6 +1,7 @@
 package main
 
 import "core:encoding/json"
+import "core:fmt"
 import "core:os"
 import "core:slice"
 import "core:strconv"
@@ -59,6 +60,25 @@ test_script_pump :: proc(s: ^TestScript, elapsed: f32, should_screenshot: ^bool,
 				}
 			}
 			sim_steps_requested^ += n
+			continue
+		}
+		// "click X Y" — push a mouse button down event at game-space coordinates
+		if strings.has_prefix(ev.key, "click ") {
+			parts := strings.split(ev.key[6:], " ", context.temp_allocator)
+			if len(parts) == 2 {
+				x, x_ok := strconv.parse_f32(parts[0])
+				y, y_ok := strconv.parse_f32(parts[1])
+				if x_ok && y_ok {
+					e: SDL.Event
+					e.button.type   = .MOUSE_BUTTON_DOWN
+					e.button.button = 1  // left click
+					e.button.x      = x
+					e.button.y      = y
+					_ = SDL.PushEvent(&e)
+				} else {
+					fmt.eprintln("test_script: invalid click coordinates:", ev.key)
+				}
+			}
 			continue
 		}
 		cname    := strings.clone_to_cstring(ev.key, context.temp_allocator)

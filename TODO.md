@@ -1,64 +1,58 @@
 # Shardbreak TODO
 
-## Block Types
-- [ ] Define block types in a separate config file (e.g. `assets/blocks.json`) with properties: name, starting lives, color, etc.
-- [ ] Level files reference block type (by name/id) instead of raw life count
-- [ ] Crack/damage overlay on blocks to visually indicate lost lives (e.g. progressive crack textures layered on top)
+## Gameplay
+- [ ] The new ball item should not show as an effect as it is an instant, verify if other instant items set an effect.
+- [ ] Balls should be able to bounce off each other
+- [ ] Change the extra ball item to instead double the number of balls, check the naming of any notifications related to that. 
+  - Each existing ball will split into two balls going in the same general direction but at opposite 10 degree angles. 
+  - Consider that the two balls will collide initially and thus add a ghost timer to the ball. 
+  - The ball will render partially slightly transparent if it is a ghost and will not collide with other balls for that time period. 
+  - Ghost balls still collide with all other objects like blocks, walls or the paddle.
+- [ ] Make a tweaks.odin file for constants that are gameplay related
+	- Extract gameplay tweakables in @main.odin to this file as well
+- [ ] Extend the effect timers by 50%
+- [ ] Separate the score into a level score and a run score.
+	- The level score is added to the run score when the level is completed. Show this on the level completed screen.
 
-## Particle System
-- [ ] 2D particle system (spawn, update, render with lifetime/velocity/fade)
-- [ ] Breaking blocks releases particles
+## Visuals
+- [ ] Add a texture for the play area as well. This should be even darker than non-playable area. Add a visual dark grey border around the play area.
+- [ ] Add a background texture for the main and options menu, but in this case it slowly moves over time in a diagonal direction.
+- [ ] Use https://fa2png.com/ to download font awesome icons for each game item into the assets/icons folder, use snake case for file names.
+  - If the downloading doesn't work investigate other ways to get font awesome icons as pngs
+- [ ] Render items in the existing circle but with the corresponding icon rendered on top in black or white depending on the color that is most readable on the item color
+- [ ] Particles should still be spawned on block hit, even if it isn't destroyed. 
+  - Make the block destroy particles more impactful than it currently is.
+  - Make hit particles less impactful than it currently is.
+  - Store emit configs as constants
 
-## Item Drops
-- [ ] Certain blocks have a chance to drop items when broken
-- [ ] Dropped items slowly fall down the screen
-- [ ] Dropped items grant abilities with three durations: timed (expires after N seconds), level (lasts until level ends), or permanent (lasts the whole run)
-- [ ] +1 life drop item (permanent — lasts the run)
-- [ ] +1 ball drop item (timed)
-- [ ] Wide paddle drop item (timed) — increases paddle width
-- [ ] Narrow paddle drop item (timed) — decreases paddle width
-- [ ] Sticky paddle drop item (timed) — ball sticks on contact, player presses Space to re-launch (like waiting_to_start)
-- [ ] Active effects HUD: show icons/indicators for active timed and level-only effects, with countdown timer for timed effects
+## Colours
+- [ ] Add helper functions for colours such as:
+	- Desaturating
+	- Changing opacity
+	- Checking if black or white is the most readable on the colour (ex. black on yellow but white on navy)
 
-## Multi-Ball
-- [ ] Support up to 6 balls in play (start with 1)
+## Physics
+- [ ] Add a Polygon struct to maths.odin, use it throughout for defining a polygon for example when rendering
+- [ ] Add collision checks similar to the existing collision checks for polygon vs circle and polygon vs rectangle
 
-## Paddle
-- [ ] Allow paddle movement during `waiting_to_start` — ball stays centered on paddle until Space launches it. Consolidate with sticky paddle logic (both hold the ball on the paddle and release with Space)
-- [ ] Curved paddle shape: slight bow with increasing bend rate near edges, slightly rounded corners
-  - Render as a series of thin vertical slices or a polyline with the curve baked in
-  - Physics: use the surface normal at the ball's contact point to determine bounce direction (steeper angle near edges = more horizontal bounce). Can approximate with a parametric curve (e.g. parabola or cosine) mapped across the paddle width
+## Saving and loading
+- [ ] Allow saving and loading the level and run state. Assume levels and item types don't change before loading and saving
+- [ ] Save the state when:
+	- Quiting a run on the pause menu
+	- After completing a level
+- [ ] If there is a save state then add a new option at the top of the menu to continue the game which loads the save state
+	- Start the saved game in a WaitingToStart, don't change any state as you would for a level start, keep it as the loaded state
 
-## Font Rendering
-- [ ] Switch from `vendor:stb/easy_font` to proper TTF rendering using `vendor:stb/truetype` + `vendor:stb/rect_pack`
-  - Font: `assets/fonts/Kenney_Future.ttf`
-  - Bake a glyph atlas texture at init, render text as textured quads
+## Assets
+- [ ] Create a new asset system
+	- There is an assets/images.json file that contains all images that must be loaded instead of each image/texture being loaded explicitly.
+	- Each entry in the images.json file also contains extra information such as the 9-patch splits or sprite sheet layouts if they are needed.
+	- Each entry defines an name for the image or a name for each entry in the sprite sheet if the asset is an sprite sheet.
+	- Allow querying the asset system for the texture/image and related info using the name
+	- Refactor all the code to use the new asset system
 
-## Renderer Dynamic Buffers
-- [ ] Replace fixed-size vertex/draw call arrays (`[16384]Vertex`, `[1100]DrawCall`) with a dynamic buffer system
-  - Options: chunk linked-list (each chunk holds N verts + draw calls, allocate new chunks as needed) or a growable buffer from `core:container`
-  - Must still upload to GPU efficiently (single or few VBO uploads per frame)
+## Rendering
+- [ ] Make draw_nine_patch delegate to draw_nine_patch_splits if it makes sense
 
-## UI Widgets
-- [ ] Expand `ui.odin` with generic immediate-mode widgets (inspired by Kenney UI kit in `assets/ui/previews/`):
-  - [ ] `ui_selector` — left/right arrow selector for cycling through options (e.g. display mode, resolution). Renders `< value >` with arrow indicators
-  - [ ] `ui_progress_bar` — horizontal bar with fill ratio, configurable colors (for health, energy, timers)
-  - [ ] `ui_indicator` — small colored circle/dot for status display (red/yellow/green, like Gate A/B/C)
-  - [ ] `ui_slider` — horizontal draggable slider with track and handle (for volume, brightness)
-  - [ ] `ui_dialog` — centered dialog window with title, message text, and a row of buttons (e.g. Yes/No confirmation)
-  - [ ] `ui_row` / `ui_col` layout helpers — arrange widgets horizontally or vertically with spacing, advancing the cursor
-
-## Refactor main.odin to use UI widgets
-- [ ] Replace hand-rolled `draw_options` with `ui_selector` widgets for Display Mode and Resolution cycling (removes manual `< value >` rendering and Left/Right key handling)
-- [ ] Replace `draw_main_menu` and `draw_paused` window+button layout with `ui_window_render` + `ui_button` using the cursor-based API (`ui_begin`/`ui_button`) instead of manual position math
-- [ ] Replace `draw_game_over` and `draw_level_complete` with `ui_dialog` (centered window with message + buttons)
-- [ ] Remove `ef.width()` calls from `main.odin` — use `text_width` from the new TTF renderer instead
-- [ ] Remove `import ef "vendor:stb/easy_font"` from `main.odin` once all usages are migrated
-
-## Text Quality
-- [ ] Audit all `draw_text` calls to ensure text is crisp and readable at all sizes — check font atlas resolution, glyph alignment to pixel grid, and scaling factors. Snap text positions to integer coordinates where needed to avoid subpixel blurring.
-
-## Two-Tone Texture Rendering
-- [ ] Renderer support for two-tone textures: black/white source textures where caller provides two colors; white maps to color A, black maps to color B, grey interpolates between them
-- [ ] Render game background using a two-tone texture instead of solid clear color (subtle effect)
-- Tileable B&W pattern textures available in `assets/patterns/` (84 patterns) — use for backgrounds and particles
+## UI
+- [ ] Add an pointer to the renderer in the UI struct and use it for rendering instead of passing the renderer into all functions

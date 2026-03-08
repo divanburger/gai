@@ -1,6 +1,7 @@
 package main
 
 import "core:math"
+import glsl "core:math/linalg/glsl"
 import "core:math/rand"
 
 Particle :: struct {
@@ -32,10 +33,40 @@ EmitConfig :: struct {
 	shrink:       bool,  // if true, size shrinks to 0 over lifetime
 }
 
-particles_init :: proc() -> ParticleSystem {
-	return ParticleSystem{
-		particles = make([dynamic]Particle),
-	}
+// Preset emit configs for block interactions.
+// Block hit: subtle feedback — few small particles.
+BLOCK_HIT_EMIT :: EmitConfig{
+	speed_min    = 30,
+	speed_max    = 120,
+	size_min     = 1.5,
+	size_max     = 3.5,
+	lifetime_min = 0.15,
+	lifetime_max = 0.4,
+	spread       = glsl.TAU,
+	direction    = 0,
+	fade         = true,
+	shrink       = true,
+}
+BLOCK_HIT_COUNT :: 6
+
+// Block destroy: impactful burst — more particles, bigger, more spread.
+BLOCK_DESTROY_EMIT :: EmitConfig{
+	speed_min    = 60,
+	speed_max    = 280,
+	size_min     = 2.5,
+	size_max     = 7,
+	lifetime_min = 0.35,
+	lifetime_max = 1.0,
+	spread       = glsl.TAU,
+	direction    = 0,
+	fade         = true,
+	shrink       = true,
+}
+BLOCK_DESTROY_COUNT :: 24
+
+particles_init :: proc(ps: ^ParticleSystem) -> bool {
+	ps.particles = make([dynamic]Particle)
+	return true
 }
 
 particles_destroy :: proc(ps: ^ParticleSystem) {

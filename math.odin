@@ -17,6 +17,10 @@ Circle :: struct {
 	radius: f32,
 }
 
+Line :: struct {
+	start, end: vec2,
+}
+
 
 // Contact info between two rects.
 // separation: negative = penetrating, zero = touching, positive = gap.
@@ -138,6 +142,13 @@ center_rect :: proc(bounds: Rect, size: vec2) -> Rect {
 	return {center - half, center + half}
 }
 
+
+// Returns black or white, whichever is more readable on the given background color.
+// Uses relative luminance (ITU-R BT.709).
+color_readable :: proc(bg: Color) -> Color {
+	luminance := 0.2126 * bg[0] + 0.7152 * bg[1] + 0.0722 * bg[2]
+	return BLACK if luminance > 0.5 else WHITE
+}
 
 // Test if a moving circle (from `pos` to `pos + vel*dt`) intersects a line segment.
 // Returns the time of first intersection in [0, 1] (relative to dt), or -1 if no hit.
