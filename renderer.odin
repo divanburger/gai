@@ -547,27 +547,9 @@ Texture :: struct {
 }
 
 texture_load :: proc(path: string) -> (t: Texture, ok: bool) {
-	buf: [512]u8
-	fmt.bprintf(buf[:], "%s\x00", path)
-
-	w, h, channels: c.int
-	data := stbi.load(cstring(raw_data(buf[:])), &w, &h, &channels, 4)
-	if data == nil {
-		fmt.eprintln("texture_load failed:", path)
-		return {}, false
-	}
-	defer stbi.image_free(data)
-
-	GL.GenTextures(1, &t.id)
-	GL.BindTexture(GL.TEXTURE_2D, t.id)
-	GL.TexImage2D(GL.TEXTURE_2D, 0, GL.RGBA, w, h, 0, GL.RGBA, GL.UNSIGNED_BYTE, data)
-	GL.TexParameteri(GL.TEXTURE_2D, GL.TEXTURE_MIN_FILTER, GL.NEAREST)
-	GL.TexParameteri(GL.TEXTURE_2D, GL.TEXTURE_MAG_FILTER, GL.NEAREST)
-	GL.TexParameteri(GL.TEXTURE_2D, GL.TEXTURE_WRAP_S, GL.CLAMP_TO_EDGE)
-	GL.TexParameteri(GL.TEXTURE_2D, GL.TEXTURE_WRAP_T, GL.CLAMP_TO_EDGE)
-
-	t.size = {i32(w), i32(h)}
-	return t, true
+	t, ok = texture_load_silent(path)
+	if !ok { fmt.eprintln("texture_load failed:", path) }
+	return
 }
 
 // texture_load_silent is like texture_load but does not print an error on failure.

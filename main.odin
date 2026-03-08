@@ -125,14 +125,25 @@ handle_main_menu :: proc(event: SDL.Event, gs: ^GameState, run: ^RunState, state
 	}
 }
 
-handle_options :: proc(event: SDL.Event, gs: ^GameState) {
+handle_options :: proc(event: SDL.Event, gs: ^GameState, settings: ^Settings) {
+	options_next :: proc(gs: ^GameState, settings: ^Settings, delta: int) {
+		count := len(OptionsItem)
+		cur   := int(gs.options_focused)
+		for {
+			cur = (cur + delta + count) % count
+			item := OptionsItem(cur)
+			if item == .Resolution && settings.display_mode == .Fullscreen { continue }
+			gs.options_focused = item
+			return
+		}
+	}
 	#partial switch event.key.scancode {
 	case .ESCAPE:
 		gs.screen = .MainMenu
 	case .UP:
-		gs.options_focused = OptionsItem((int(gs.options_focused) - 1 + len(OptionsItem)) % len(OptionsItem))
+		options_next(gs, settings, -1)
 	case .DOWN:
-		gs.options_focused = OptionsItem((int(gs.options_focused) + 1) % len(OptionsItem))
+		options_next(gs, settings, 1)
 	case .RETURN, .KP_ENTER:
 		if gs.options_focused == .Back { gs.screen = .MainMenu }
 	}
@@ -266,7 +277,12 @@ draw_options :: proc(r: ^Renderer, gs: ^GameState, settings: ^Settings, assets: 
 	draw_menu_background(r, assets, elapsed)
 
 	resolutions := RESOLUTIONS
-	res         := resolutions[settings.resolution_idx]
+	res: ivec2
+	if settings.display_mode == .Fullscreen {
+		res = r.window_size
+	} else {
+		res = resolutions[settings.resolution_idx]
+	}
 	values := [OptionsItem]string{
 		.DisplayMode = display_mode_name(settings.display_mode),
 		.Resolution  = fmt.tprintf("%dx%d", res.x, res.y),
@@ -313,8 +329,9 @@ draw_options :: proc(r: ^Renderer, gs: ^GameState, settings: ^Settings, assets: 
 		changed = true
 	}
 
-	res_delta := ui_selector(r, ui, option_labels[.Resolution], values[.Resolution], content_w, gs.options_focused == .Resolution, max_label_w)
-	if res_delta != 0 && settings.display_mode != .Fullscreen {
+	res_disabled := settings.display_mode == .Fullscreen
+	res_delta := ui_selector(r, ui, option_labels[.Resolution], values[.Resolution], content_w, gs.options_focused == .Resolution, max_label_w, res_disabled)
+	if res_delta != 0 {
 		settings.resolution_idx = (settings.resolution_idx + res_delta + len(RESOLUTIONS)) % len(RESOLUTIONS)
 		changed = true
 	}
@@ -452,18 +469,21 @@ draw_blocks :: proc(r: ^Renderer, state: ^LevelState, types: []BlockType) {
 	}
 }
 
-draw_item_drops :: proc(r: ^Renderer, state: ^LevelState) {
+// draw_item_icon draws a colored circle with an icon overlay at the given position and size.
+draw_item_icon :: proc(r: ^Renderer, kind: ItemKind, pos: vec2, size: f32) {
 	colors := ITEM_COLORS
+	draw_circle(r, Circle{pos = pos, radius = size / 2}, colors[kind])
+	icon := r.item_icons[kind]
+	if icon.id != 0 {
+		half := vec2{size, size} * 0.5
+		draw_image(r, Rect{min = pos - half, max = pos + half}, icon, color_readable(colors[kind]))
+	}
+}
+
+draw_item_drops :: proc(r: ^Renderer, state: ^LevelState) {
 	for di in 0..<state.drop_count {
-		d      := state.drops[di]
-		radius := ITEM_SIZE.x / 2
-		draw_circle(r, Circle{pos = d.pos, radius = radius}, colors[d.kind])
-		icon := r.item_icons[d.kind]
-		if icon.id != 0 {
-			icon_color := color_readable(colors[d.kind])
-			icon_half  := ITEM_SIZE * 0.5
-			draw_image(r, Rect{min = d.pos - icon_half, max = d.pos + icon_half}, icon, icon_color)
-		}
+		d := state.drops[di]
+		draw_item_icon(r, d.kind, d.pos, ITEM_SIZE.x)
 	}
 }
 
@@ -483,12 +503,16 @@ draw_effects_hud :: proc(r: ^Renderer, state: ^LevelState, ui: ^UI) {
 	}
 	if !has_any { return }
 	colors := ITEM_COLORS
-	ui.cursor = {10, GAME_SIZE.y - 30}
+	icon_size := ITEM_SIZE.x
+	ui.cursor = {10, GAME_SIZE.y - ITEM_SIZE.x - 10}
 	ui_row_begin(ui)
 	for kind in ItemKind {
 		t := state.effect_timers[kind]
 		if t <= 0 { continue }
-		ui_indicator(r, ui, colors[kind], 10)
+		icon_center := ui.cursor + {icon_size / 2, icon_size / 2}
+		draw_item_icon(r, kind, icon_center, icon_size)
+		ui.cursor.x += icon_size + BUTTON_SPACING
+		ui.line_height = max(ui.line_height, icon_size)
 		label := fmt.tprintf("%s %.0fs", effect_labels[kind], t)
 		draw_text(r, r.ui_font, label, ui.cursor, colors[kind], .Left)
 		ui.cursor.x += text_width(r.ui_font, label) + 12
@@ -540,7 +564,7 @@ handle_event :: proc(event: SDL.Event, gs: ^GameState, run: ^RunState, state: ^L
 	case .KEY_DOWN:
 		switch gs.screen {
 		case .MainMenu:      handle_main_menu(event, gs, run, state, levels)
-		case .Options:       handle_options(event, gs)
+		case .Options:       handle_options(event, gs, settings)
 		case .GameOver:      handle_game_over(event, gs, run, state, levels)
 		case .LevelComplete: handle_level_complete(event, gs, run, state, levels)
 		case .Playing:

@@ -63,13 +63,14 @@ ui_spacing :: proc(ui: ^UI, amount: f32) {
 // ui_button_render draws a button nine-patch + centred label.
 // selected=true tints the normal button texture with BUTTON_SELECT_TINT (light blue).
 // button_sel_tex and BUTTON_SEL_SPLITS_* are loaded/defined for future use.
-ui_button_render :: proc(r: ^Renderer, ui: UI, rect: Rect, label: string, selected: bool = false) {
-	tint := BUTTON_SELECT_TINT if selected else WHITE
+ui_button_render :: proc(r: ^Renderer, ui: UI, rect: Rect, label: string, selected: bool = false, tint_override: Color = WHITE) {
+	tint := BUTTON_SELECT_TINT if selected else tint_override
 	a := asset_get(ui.assets, "button")
 	if a != nil {
 		draw_nine_patch(r, rect, a.texture, a.nine_patch.border, tint)
 	}
-	draw_text_rect(r, r.ui_font, label, rect, BLACK)
+	label_color := Color{0, 0, 0, tint_override.a}
+	draw_text_rect(r, r.ui_font, label, rect, label_color)
 }
 
 // ui_window_render draws a window using draw_nine_patch_splits so the blade header texture
@@ -98,10 +99,10 @@ ui_window_render :: proc(r: ^Renderer, ui: UI, rect: Rect, label: string) -> Rec
 // ---------------------------------------------------------------------------
 
 // ui_inlay_render draws a recessed panel (panel nine-patch) with centered text.
-ui_inlay_render :: proc(r: ^Renderer, ui: UI, rect: Rect, text: string, color: Color = BLACK) {
+ui_inlay_render :: proc(r: ^Renderer, ui: UI, rect: Rect, text: string, color: Color = BLACK, tint: Color = WHITE) {
 	a := asset_get(ui.assets, "inlay")
 	if a != nil {
-		draw_nine_patch(r, rect, a.texture, a.nine_patch.border)
+		draw_nine_patch(r, rect, a.texture, a.nine_patch.border, tint)
 	}
 	draw_text_rect(r, r.ui_font, text, rect, color)
 }
@@ -113,13 +114,22 @@ SELECTOR_GAP     :: f32(6)   // gap between arrow buttons and inlay
 // Layout: LABEL (on background)  [<] [ inlay value ] [>]
 // Returns -1 for left press, +1 for right press, 0 for no change.
 // Keyboard input (Left/Right) is consumed only when selected=true.
-ui_selector :: proc(r: ^Renderer, ui: ^UI, label: string, value: string, total_w: f32, selected: bool = false, label_w: f32 = 0) -> (changed: int) {
+SELECTOR_DISABLED_ALPHA :: f32(0.35)
+
+ui_selector :: proc(r: ^Renderer, ui: ^UI, label: string, value: string, total_w: f32, selected: bool = false, label_w: f32 = 0, disabled: bool = false) -> (changed: int) {
 	text_h := r.ui_font.size
 	btn_h  := text_h + BUTTON_PAD_Y * 2
 
 	// Label on the left, drawn directly on window background (light grey)
 	SELECTOR_LABEL_SELECTED :: Color{0.15, 0.4, 0.7, 1}  // dark blue for readability on light bg
-	label_color := SELECTOR_LABEL_SELECTED if selected else BLACK
+	label_color: Color
+	if disabled {
+		label_color = Color{0, 0, 0, SELECTOR_DISABLED_ALPHA}
+	} else if selected {
+		label_color = SELECTOR_LABEL_SELECTED
+	} else {
+		label_color = BLACK
+	}
 	label_y := ui.cursor.y + (btn_h - text_h) / 2
 	draw_text(r, r.ui_font, label, {ui.cursor.x, label_y}, label_color, .Left)
 
@@ -130,12 +140,14 @@ ui_selector :: proc(r: ^Renderer, ui: ^UI, label: string, value: string, total_w
 	// Inlay width fills the remaining space between the two arrow buttons
 	inlay_w := total_w - lw - BUTTON_PAD_X - SELECTOR_ARROW_W * 2 - SELECTOR_GAP * 2
 
+	tint := Color{1, 1, 1, SELECTOR_DISABLED_ALPHA} if disabled else WHITE
+
 	// Left arrow button
 	left_rect := Rect{
 		min = {controls_x, ui.cursor.y},
 		max = {controls_x + SELECTOR_ARROW_W, ui.cursor.y + btn_h},
 	}
-	ui_button_render(r, ui^, left_rect, "<", selected)
+	ui_button_render(r, ui^, left_rect, "<", selected && !disabled, tint)
 
 	// Inlay with value
 	inlay_x := controls_x + SELECTOR_ARROW_W + SELECTOR_GAP
@@ -143,7 +155,8 @@ ui_selector :: proc(r: ^Renderer, ui: ^UI, label: string, value: string, total_w
 		min = {inlay_x, ui.cursor.y},
 		max = {inlay_x + inlay_w, ui.cursor.y + btn_h},
 	}
-	ui_inlay_render(r, ui^, inlay_rect, value)
+	inlay_text_color := Color{0, 0, 0, SELECTOR_DISABLED_ALPHA} if disabled else BLACK
+	ui_inlay_render(r, ui^, inlay_rect, value, inlay_text_color, tint)
 
 	// Right arrow button
 	right_x := inlay_x + inlay_w + SELECTOR_GAP
@@ -151,16 +164,18 @@ ui_selector :: proc(r: ^Renderer, ui: ^UI, label: string, value: string, total_w
 		min = {right_x, ui.cursor.y},
 		max = {right_x + SELECTOR_ARROW_W, ui.cursor.y + btn_h},
 	}
-	ui_button_render(r, ui^, right_rect, ">", selected)
+	ui_button_render(r, ui^, right_rect, ">", selected && !disabled, tint)
 
-	// Click detection
-	if ui.input.mouse_clicked {
-		if point_inside_rect(ui.input.mouse_pos, left_rect)  { changed = -1 }
-		if point_inside_rect(ui.input.mouse_pos, right_rect) { changed =  1 }
-	}
-	if selected {
-		if ui.input.keys[.LEFT].went_down  { changed = -1 }
-		if ui.input.keys[.RIGHT].went_down { changed =  1 }
+	// Click and keyboard detection (disabled suppresses input)
+	if !disabled {
+		if ui.input.mouse_clicked {
+			if point_inside_rect(ui.input.mouse_pos, left_rect)  { changed = -1 }
+			if point_inside_rect(ui.input.mouse_pos, right_rect) { changed =  1 }
+		}
+		if selected {
+			if ui.input.keys[.LEFT].went_down  { changed = -1 }
+			if ui.input.keys[.RIGHT].went_down { changed =  1 }
+		}
 	}
 
 	ui.cursor.y    += btn_h + BUTTON_SPACING
