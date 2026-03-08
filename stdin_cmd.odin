@@ -147,8 +147,8 @@ stdin_reader_pump :: proc(sr: ^StdinReader, should_screenshot: ^bool, running: ^
 				gs.screen, gs.playing_state, run.lives, state.score, run.run_score, blocks_remaining,
 				state.paddle.pos.x, state.paddle.pos.y, len(state.balls)))
 			for b, i in state.balls {
-				game_log(state, fmt.tprintf("ball idx=%d x=%.1f y=%.1f dx=%.2f dy=%.2f locked=%v ghost=%.2f",
-					i, b.pos.x, b.pos.y, b.dir.x, b.dir.y, b.locked, b.ghost_timer))
+				game_log(state, fmt.tprintf("ball idx=%d x=%.1f y=%.1f dx=%.2f dy=%.2f locked=%v ghost=%v",
+					i, b.pos.x, b.pos.y, b.dir.x, b.dir.y, b.locked, b.ghost))
 			}
 		case .Blocks:
 			for row in 0..<BLOCK_ROWS {

@@ -404,7 +404,7 @@ PLAY_AREA_BG_B         :: Color{0.03, 0.03, 0.03, 1}
 draw_balls :: proc(r: ^Renderer, gs: ^GameState, state: ^LevelState) {
 	for &ball in state.balls {
 		ball_color := WHITE
-		if ball.ghost_timer > 0 { ball_color.a = 0.4 }
+		if ball.ghost { ball_color.a = 0.4 }
 		draw_circle(r, ball.circle, ball_color)
 
 		// Draw a transparent dotted line showing launch direction for locked balls

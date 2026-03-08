@@ -9,7 +9,6 @@ BALL_RADIUS    :: 18.0
 BALL_SPEED     :: vec2{450.0, 324.0}
 BALL_FAST_MULT :: f32(1.5)  // speed multiplier when FastBall effect active
 BALL_SLOW_MULT :: f32(0.6)  // speed multiplier when SlowBall effect active
-BALL_GHOST_TIME :: f32(1.5) // seconds newly-split balls are ghosted
 BALL_SPLIT_ANGLE :: f32(10.0) // degrees offset for ball split
 
 // Paddle

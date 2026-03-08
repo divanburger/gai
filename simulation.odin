@@ -5,6 +5,123 @@ import glsl "core:math/linalg/glsl"
 import "core:math"
 import "core:math/rand"
 
+Ball :: struct {
+	using circle: Circle,
+	dir:         vec2,  // unit direction vector; velocity = dir * effective_ball_speed
+	locked:      bool,
+	lock_offset: vec2,  // offset from paddle center when sticky-locked
+	ghost:       bool,  // true while overlapping another ball after split; no ball-ball collision
+}
+
+Paddle :: struct {
+	pos: vec2,
+}
+
+ItemKind :: enum { ExtraLife, ExtraBall, WidePaddle, NarrowPaddle, StickyPaddle, FastBall, SlowBall }
+
+ITEM_COLORS :: [ItemKind]Color{
+	.ExtraLife    = Color{0, 1, 0, 1},
+	.ExtraBall    = Color{0, 0.7, 1, 1},
+	.WidePaddle   = Color{1, 0.5, 0, 1},
+	.NarrowPaddle = Color{1, 0, 0.5, 1},
+	.StickyPaddle = Color{1, 1, 0, 1},
+	.FastBall     = Color{1, 0.3, 0.3, 1},
+	.SlowBall     = Color{0.3, 0.6, 1, 1},
+}
+
+DurationType :: enum { Instant, Timed, Level }
+
+ITEM_DURATIONS :: [ItemKind]DurationType{
+	.ExtraLife    = .Instant,
+	.ExtraBall    = .Instant,
+	.WidePaddle   = .Timed,
+	.NarrowPaddle = .Timed,
+	.StickyPaddle = .Timed,
+	.FastBall     = .Timed,
+	.SlowBall     = .Timed,
+}
+
+ITEM_TIMERS :: [ItemKind]f32{
+	.ExtraLife    = 0,
+	.ExtraBall    = EFFECT_TIMER_EXTRA_BALL,
+	.WidePaddle   = EFFECT_TIMER_WIDE_PADDLE,
+	.NarrowPaddle = EFFECT_TIMER_NARROW_PADDLE,
+	.StickyPaddle = EFFECT_TIMER_STICKY_PADDLE,
+	.FastBall     = EFFECT_TIMER_FAST_BALL,
+	.SlowBall     = EFFECT_TIMER_SLOW_BALL,
+}
+
+ItemDrop :: struct {
+	pos:    vec2,
+	kind:   ItemKind,
+	active: bool,
+}
+
+LevelState :: struct {
+	using level:  Level,
+	balls:        [dynamic]Ball,
+	paddle:       Paddle,
+	score:        int,
+	drops:         [MAX_DROPS]ItemDrop,
+	drop_count:    int,
+	effect_timers: [ItemKind]f32,
+	sim_steps:       int,
+	sim_time:        f32,
+	sim_accumulator: f32,
+}
+
+RunState :: struct {
+	lives:     int,
+	level_idx: int,
+	run_score: int,
+}
+
+level_state_init :: proc(s: ^LevelState, level: Level) {
+	delete(s.balls)
+	s^ = {}
+	s.level      = level
+	s.paddle     = {pos = {GAME_SIZE.x / 2, PADDLE_Y}}
+	s.balls      = make([dynamic]Ball, 0, MAX_BALLS)
+	spawn_locked_ball(s, PADDLE_SIZE.x)
+}
+
+run_state_init :: proc(run: ^RunState, ls: ^LevelState, levels: []Level) {
+	run.lives     = STARTING_LIVES
+	run.level_idx = 0
+	run.run_score = 0
+	level_state_init(ls, levels[0])
+}
+
+add_effect :: proc(state: ^LevelState, kind: ItemKind) {
+	durations := ITEM_DURATIONS
+	timers    := ITEM_TIMERS
+	if durations[kind] == .Instant { return }
+	state.effect_timers[kind] = timers[kind]
+}
+
+has_effect :: proc(state: ^LevelState, kind: ItemKind) -> bool {
+	return state.effect_timers[kind] > 0
+}
+
+effective_paddle_width :: proc(state: ^LevelState) -> f32 {
+	w := PADDLE_SIZE.x
+	if has_effect(state, .WidePaddle)   { w *= PADDLE_WIDE_MULT }
+	if has_effect(state, .NarrowPaddle) { w *= PADDLE_NARROW_MULT }
+	return w
+}
+
+// Spawn a ball locked to the paddle at a slight horizontal offset.
+spawn_locked_ball :: proc(s: ^LevelState, paddle_width: f32) {
+	lock_x := paddle_width * 0.2
+	lock_t := lock_x / (paddle_width / 2)
+	lock_y := paddle_surface_y(0, PADDLE_SIZE.y / 2, lock_t) - BALL_RADIUS
+	append(&s.balls, Ball{
+		circle      = {pos = s.paddle.pos + {lock_x, lock_y}, radius = BALL_RADIUS},
+		locked      = true,
+		lock_offset = {lock_x, lock_y},
+	})
+}
+
 // Y position of the paddle's curved top surface at normalized position t in [-1, 1].
 paddle_surface_y :: proc(paddle_y: f32, paddle_half_h: f32, t: f32) -> f32 {
 	return paddle_y - paddle_half_h - PADDLE_BOW_HEIGHT * (1.0 - t * t)
@@ -27,7 +144,7 @@ effective_ball_speed :: proc(state: ^LevelState) -> f32 {
 }
 
 // split_balls doubles all existing balls. Each ball spawns a twin at opposite angle offsets.
-// Newly spawned balls start with a ghost timer (transparent, no ball-ball collision).
+// Newly spawned balls start as ghosts (transparent, no ball-ball collision).
 split_balls :: proc(state: ^LevelState) {
 	count := len(state.balls)
 	if count == 0 { return }
@@ -49,7 +166,7 @@ split_balls :: proc(state: ^LevelState) {
 			orig.dir.x * cos_a + orig.dir.y * sin_a,
 			-orig.dir.x * sin_a + orig.dir.y * cos_a,
 		})
-		new_ball.ghost_timer = BALL_GHOST_TIME
+		new_ball.ghost = true
 		append(&state.balls, new_ball)
 	}
 }
@@ -62,20 +179,12 @@ paddle_bounce_normal :: proc(hit_x: f32, paddle_center_x: f32, paddle_half_width
 }
 
 apply_item_effect :: proc(run: ^RunState, state: ^LevelState, kind: ItemKind) {
-	switch kind {
+	#partial switch kind {
 	case .ExtraLife:
 		run.lives += 1
 	case .ExtraBall:
 		split_balls(state)
-	case .WidePaddle:
-		add_effect(state, kind)
-	case .NarrowPaddle:
-		add_effect(state, kind)
-	case .StickyPaddle:
-		add_effect(state, kind)
-	case .FastBall:
-		add_effect(state, kind)
-	case .SlowBall:
+	case:
 		add_effect(state, kind)
 	}
 }
@@ -118,11 +227,6 @@ simulate_step :: proc(gs: ^GameState, run: ^RunState, state: ^LevelState, ps: ^P
 			continue
 		}
 
-		// Tick ghost timer
-		if ball.ghost_timer > 0 {
-			ball.ghost_timer -= dt
-			if ball.ghost_timer < 0 { ball.ghost_timer = 0 }
-		}
 
 		speed := effective_ball_speed(state)
 		ball.pos += ball.dir * speed * dt
@@ -210,19 +314,22 @@ simulate_step :: proc(gs: ^GameState, run: ^RunState, state: ^LevelState, ps: ^P
 			}
 	}
 
-	// Ball-to-ball collision (skip ghost balls)
+	// Ball-to-ball collision (skip ghost balls; clear ghost when no longer overlapping)
 	for ai in 0..<len(state.balls) {
 		a := &state.balls[ai]
 		if a.locked { continue }
-		for bi in ai+1..<len(state.balls) {
+		in_contact := false
+		for bi in 0..<len(state.balls) {
+			if ai == bi { continue }
 			b := &state.balls[bi]
 			if b.locked { continue }
-			// Ghost balls don't collide with other balls
-			if a.ghost_timer > 0 || b.ghost_timer > 0 { continue }
 			delta := a.pos - b.pos
 			dist  := glsl.length(delta)
 			min_dist := a.radius + b.radius
 			if dist < min_dist && dist > 0 {
+				in_contact = true
+				// Ghost balls don't collide — just track contact
+				if a.ghost || b.ghost { continue }
 				// Push apart
 				normal := delta / dist
 				overlap := min_dist - dist
@@ -242,6 +349,9 @@ simulate_step :: proc(gs: ^GameState, run: ^RunState, state: ^LevelState, ps: ^P
 					b.dir = glsl.normalize(b_vel)
 				}
 			}
+		}
+		if a.ghost && !in_contact {
+			a.ghost = false
 		}
 	}
 
