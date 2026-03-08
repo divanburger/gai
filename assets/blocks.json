@@ -1,5 +1,6 @@
 [
-  {"name": "normal", "lives": 1, "color": [1, 1, 1, 1]},
-  {"name": "tough",  "lives": 2, "color": [1, 1, 0, 1]},
-  {"name": "strong", "lives": 3, "color": [1, 0, 0, 1]}
+  {"name": "normal",   "char": "1", "hit_points": 1, "color": [1, 1, 1, 1]},
+  {"name": "tough",    "char": "2", "hit_points": 2, "color": [1, 1, 0, 1]},
+  {"name": "strong",   "char": "3", "hit_points": 3, "color": [1, 0, 0, 1]},
+  {"name": "treasure", "char": "T", "hit_points": 1, "color": [0, 1, 0.5, 1], "drop_chance": 1.0}
 ]

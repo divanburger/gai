@@ -5,9 +5,11 @@ import "core:fmt"
 import "core:os"
 
 BlockType :: struct {
-	name:  string,
-	lives: int,
-	color: Color,
+	name:        string,
+	char:        u8,    // character used in level files to identify this type
+	hit_points:  int,   // hits to destroy
+	color:       Color,
+	drop_chance: f32,   // probability of dropping an item on destroy
 }
 
 Block :: struct {
@@ -22,13 +24,15 @@ Level :: struct {
 
 // JSON file shapes
 BlockTypeFile :: struct {
-	name:  string,
-	lives: int,
-	color: [4]f32,
+	name:        string,
+	char:        string,
+	hit_points:  int,
+	color:       [4]f32,
+	drop_chance: f32,
 }
 
 LevelFile :: struct {
-	blocks:             [dynamic][dynamic]int,
+	blocks:             [dynamic]string,
 	playing_area_width: f32,
 }
 
@@ -49,18 +53,20 @@ block_types_load :: proc(allocator := context.allocator) -> (types: []BlockType,
 	result := make([]BlockType, len(raw), allocator)
 	for f, i in raw {
 		result[i] = BlockType{
-			name  = f.name,
-			lives = f.lives,
-			color = Color{f.color[0], f.color[1], f.color[2], f.color[3]},
+			name        = f.name,
+			char        = f.char[0] if len(f.char) > 0 else '?',
+			hit_points  = f.hit_points,
+			color       = Color{f.color[0], f.color[1], f.color[2], f.color[3]},
+			drop_chance = f.drop_chance if f.drop_chance > 0 else ITEM_DROP_CHANCE,
 		}
 	}
 	return result, true
 }
 
-// Find the block type index whose lives value matches. Falls back to -1.
-block_type_for_lives :: proc(types: []BlockType, lives: int) -> int {
+// Find the block type index whose char matches. Falls back to -1.
+block_type_for_char :: proc(types: []BlockType, ch: u8) -> int {
 	for t, i in types {
-		if t.lives == lives { return i }
+		if t.char == ch { return i }
 	}
 	return -1
 }
@@ -82,18 +88,18 @@ level_load :: proc(path: string, types: []BlockType) -> (level: Level, ok: bool)
 		fmt.eprintln("level_load: could not parse", path)
 		return
 	}
-	defer {
-		for row in file.blocks { delete(row) }
-		delete(file.blocks)
-	}
+	defer delete(file.blocks)
 
 	for row, r in file.blocks {
 		if r >= BLOCK_ROWS { break }
-		for lives, c in row {
+		for ch, c in row {
 			if c >= BLOCK_COLS { break }
+			if ch == '.' || ch == ' ' { continue } // empty cell
+			type_idx := block_type_for_char(types, u8(ch))
+			if type_idx < 0 { continue }
 			level.blocks[r * BLOCK_COLS + c] = Block{
-				lives    = lives,
-				type_idx = block_type_for_lives(types, lives),
+				lives    = types[type_idx].hit_points,
+				type_idx = type_idx,
 			}
 		}
 	}

@@ -64,6 +64,22 @@ BLOCK_DESTROY_EMIT :: EmitConfig{
 }
 BLOCK_DESTROY_COUNT :: 24
 
+// Sticky paddle catch: subtle upward puff in StickyPaddle item color.
+STICKY_CATCH_EMIT :: EmitConfig{
+	color        = {1, 1, 0, 0.7}, // matches StickyPaddle item color (yellow)
+	speed_min    = 20,
+	speed_max    = 80,
+	size_min     = 1.5,
+	size_max     = 3.0,
+	lifetime_min = 0.2,
+	lifetime_max = 0.5,
+	spread       = glsl.TAU / 3, // 120 degree upward cone
+	direction    = -glsl.TAU / 4, // upward
+	fade         = true,
+	shrink       = true,
+}
+STICKY_CATCH_COUNT :: 8
+
 particles_init :: proc(ps: ^ParticleSystem) -> bool {
 	ps.particles = make([dynamic]Particle)
 	return true

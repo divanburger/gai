@@ -17,7 +17,7 @@ Paddle :: struct {
 	pos: vec2,
 }
 
-ItemKind :: enum { ExtraLife, ExtraBall, WidePaddle, NarrowPaddle, StickyPaddle, FastBall, SlowBall }
+ItemKind :: enum { ExtraLife, ExtraBall, WidePaddle, NarrowPaddle, StickyPaddle, FastBall, SlowBall, Punch }
 
 ITEM_COLORS :: [ItemKind]Color{
 	.ExtraLife    = Color{0, 1, 0, 1},
@@ -27,6 +27,7 @@ ITEM_COLORS :: [ItemKind]Color{
 	.StickyPaddle = Color{1, 1, 0, 1},
 	.FastBall     = Color{1, 0.3, 0.3, 1},
 	.SlowBall     = Color{0.3, 0.6, 1, 1},
+	.Punch        = Color{1, 0.2, 0, 1},
 }
 
 DurationType :: enum { Instant, Timed, Level }
@@ -39,6 +40,7 @@ ITEM_DURATIONS :: [ItemKind]DurationType{
 	.StickyPaddle = .Timed,
 	.FastBall     = .Timed,
 	.SlowBall     = .Timed,
+	.Punch        = .Timed,
 }
 
 ITEM_TIMERS :: [ItemKind]f32{
@@ -49,6 +51,18 @@ ITEM_TIMERS :: [ItemKind]f32{
 	.StickyPaddle = EFFECT_TIMER_STICKY_PADDLE,
 	.FastBall     = EFFECT_TIMER_FAST_BALL,
 	.SlowBall     = EFFECT_TIMER_SLOW_BALL,
+	.Punch        = EFFECT_TIMER_PUNCH,
+}
+
+ITEM_ICONS :: [ItemKind]Icon{
+	.ExtraLife    = .Heart,
+	.ExtraBall    = .Circle,
+	.WidePaddle   = .ArrowsOut,
+	.NarrowPaddle = .ArrowsIn,
+	.StickyPaddle = .Droplet,
+	.FastBall     = .ChevronRight,
+	.SlowBall     = .PauseBars,
+	.Punch        = .Fist,
 }
 
 ItemDrop :: struct {
@@ -61,6 +75,7 @@ LevelState :: struct {
 	using level:  Level,
 	balls:        [dynamic]Ball,
 	paddle:       Paddle,
+	paddle_tint:  Color,
 	score:        int,
 	drops:         [MAX_DROPS]ItemDrop,
 	drop_count:    int,
@@ -79,9 +94,10 @@ RunState :: struct {
 level_state_init :: proc(s: ^LevelState, level: Level) {
 	delete(s.balls)
 	s^ = {}
-	s.level      = level
-	s.paddle     = {pos = {GAME_SIZE.x / 2, PADDLE_Y}}
-	s.balls      = make([dynamic]Ball, 0, MAX_BALLS)
+	s.level       = level
+	s.paddle      = {pos = {GAME_SIZE.x / 2, PADDLE_TOP_Y + PADDLE_SIZE.y / 2}}
+	s.paddle_tint = WHITE
+	s.balls       = make([dynamic]Ball, 0, MAX_BALLS)
 	spawn_locked_ball(s, PADDLE_SIZE.x)
 }
 
@@ -123,8 +139,16 @@ spawn_locked_ball :: proc(s: ^LevelState, paddle_width: f32) {
 }
 
 // Y position of the paddle's curved top surface at normalized position t in [-1, 1].
+paddle_bow :: proc(t: f32) -> f32 {
+	// Flat for middle 25%, cubic curve beyond
+	at := abs(t)
+	if at < 0.125 { return 1.0 }
+	curved := remap(at, 0.125, 1.0, 0.0, 1.0)
+	return 1.0 - curved * curved * curved
+}
+
 paddle_surface_y :: proc(paddle_y: f32, paddle_half_h: f32, t: f32) -> f32 {
-	return paddle_y - paddle_half_h - PADDLE_BOW_HEIGHT * (1.0 - t * t)
+	return paddle_y - paddle_half_h - PADDLE_BOW_HEIGHT * paddle_bow(t)
 }
 
 release_locked_balls :: proc(state: ^LevelState) {
@@ -171,11 +195,41 @@ split_balls :: proc(state: ^LevelState) {
 	}
 }
 
+// Check if a circle overlaps the paddle's curved top surface.
+// Returns true if the circle touches the paddle, and the corrected Y position (pushed above surface).
+paddle_circle_contact :: proc(circle: Circle, paddle_pos: vec2, paddle_half: vec2, pw: f32) -> (hit: bool, corrected_y: f32) {
+	// Quick AABB reject
+	if circle.pos.x + circle.radius < paddle_pos.x - paddle_half.x { return }
+	if circle.pos.x - circle.radius > paddle_pos.x + paddle_half.x { return }
+	if circle.pos.y + circle.radius < paddle_pos.y - paddle_half.y - PADDLE_BOW_HEIGHT { return }
+	if circle.pos.y - circle.radius > paddle_pos.y + paddle_half.y { return }
+
+	t := clamp((circle.pos.x - paddle_pos.x) / (pw / 2), -1, 1)
+	surface_y := paddle_surface_y(paddle_pos.y, paddle_half.y, t)
+	if circle.pos.y + circle.radius >= surface_y && circle.pos.y < paddle_pos.y + paddle_half.y {
+		return true, surface_y - circle.radius
+	}
+	return
+}
+
 paddle_bounce_normal :: proc(hit_x: f32, paddle_center_x: f32, paddle_half_width: f32) -> vec2 {
 	t := clamp((hit_x - paddle_center_x) / paddle_half_width, -1, 1)
 	max_angle :: f32(67.5 * math.PI / 180.0)
 	angle := t * max_angle
 	return glsl.normalize(vec2{math.sin(angle), -math.cos(angle)})
+}
+
+random_item_kind :: proc() -> ItemKind {
+	weights := ITEM_DROP_WEIGHTS
+	total: f32
+	for w in weights { total += w }
+	r := rand.float32() * total
+	acc: f32
+	for kind in ItemKind {
+		acc += weights[kind]
+		if r < acc { return kind }
+	}
+	return ItemKind(len(ItemKind) - 1)
 }
 
 apply_item_effect :: proc(run: ^RunState, state: ^LevelState, kind: ItemKind) {
@@ -212,10 +266,21 @@ simulate_step :: proc(gs: ^GameState, run: ^RunState, state: ^LevelState, ps: ^P
 		}
 	}
 
+	// Animate paddle tint toward target color based on active paddle effects
+	paddle_effects := [?]ItemKind{.WidePaddle, .NarrowPaddle, .StickyPaddle}
+	colors := ITEM_COLORS
+	target_tint := WHITE
+	for kind in paddle_effects {
+		if has_effect(state, kind) {
+			target_tint = color_mix(WHITE, colors[kind], 0.25)
+			break
+		}
+	}
+	state.paddle_tint = move_toward(state.paddle_tint, target_tint, PADDLE_TINT_SPEED, dt)
+
 	pa := state.playing_area
 	pw := effective_paddle_width(state)
 	paddle_half := vec2{pw, PADDLE_SIZE.y} / 2
-	paddle_rect := Rect{min = state.paddle.pos - paddle_half, max = state.paddle.pos + paddle_half}
 
 	// Update each ball (iterate backwards for correct unordered_remove)
 	for bi := len(state.balls) - 1; bi >= 0; bi -= 1 {
@@ -251,14 +316,17 @@ simulate_step :: proc(gs: ^GameState, run: ^RunState, state: ^LevelState, ps: ^P
 		}
 
 		if best_t >= 0 {
-			// Move to contact point, reflect, then continue remaining time
-			ball.pos += vel * (best_t * dt)
-			ball.dir = glsl.normalize(glsl.reflect(ball.dir, best_normal))
-			remaining := (1 - best_t) * dt
-			ball.pos += ball.dir * speed * remaining
-
 			idx := best_row * BLOCK_COLS + best_col
 			state.blocks[idx].lives -= 1
+			punching := has_effect(state, .Punch) && state.blocks[idx].lives <= 0
+
+			// Move to contact point; punch through destroyed blocks, otherwise reflect
+			ball.pos += vel * (best_t * dt)
+			if !punching {
+				ball.dir = glsl.normalize(glsl.reflect(ball.dir, best_normal))
+			}
+			remaining := (1 - best_t) * dt
+			ball.pos += ball.dir * speed * remaining
 			state.score += SCORE_PER_BLOCK
 			game_log(state, fmt.tprintf("block_hit col=%d row=%d lives_left=%d", best_col, best_row, state.blocks[idx].lives))
 			emit_color := block_color(state.blocks[idx], types)
@@ -268,8 +336,12 @@ simulate_step :: proc(gs: ^GameState, run: ^RunState, state: ^LevelState, ps: ^P
 				destroy_cfg := BLOCK_DESTROY_EMIT
 				destroy_cfg.color = emit_color
 				particles_emit(ps, center, BLOCK_DESTROY_COUNT, destroy_cfg)
-				if rand.float32() < ITEM_DROP_CHANCE && state.drop_count < MAX_DROPS {
-					kind := ItemKind(rand.int31_max(i32(len(ItemKind))))
+				drop_chance := ITEM_DROP_CHANCE
+				if state.blocks[idx].type_idx >= 0 && state.blocks[idx].type_idx < len(types) {
+					drop_chance = types[state.blocks[idx].type_idx].drop_chance
+				}
+				if rand.float32() < drop_chance && state.drop_count < MAX_DROPS {
+					kind := random_item_kind()
 					state.drops[state.drop_count] = ItemDrop{pos = center, kind = kind, active = true}
 					state.drop_count += 1
 					game_log(state, fmt.tprintf("item_spawned kind=%v pos=[%.1f,%.1f]", kind, center.x, center.y))
@@ -283,26 +355,20 @@ simulate_step :: proc(gs: ^GameState, run: ^RunState, state: ^LevelState, ps: ^P
 			ball.pos += vel * dt
 		}
 
-			// Paddle collision — curved top surface matching visual bow
-			// First check broad rect, then refine with curve
-			sep, _ := rect_circle_contact(paddle_rect, ball.circle)
-			if sep <= 0 && ball.dir.y > 0 {
-				// Compute the curved surface Y at the ball's x position
-				t := clamp((ball.pos.x - state.paddle.pos.x) / (pw / 2), -1, 1)
-				surface_y := paddle_surface_y(state.paddle.pos.y, paddle_half.y, t)
-
-				if ball.pos.y + ball.radius >= surface_y {
-					ball.pos.y = surface_y - ball.radius
-					n := paddle_bounce_normal(ball.pos.x, state.paddle.pos.x, pw / 2)
-					reflected := glsl.reflect(ball.dir, n)
-					reflected.y = -abs(reflected.y) // always bounce upward
-					ball.dir = glsl.normalize(reflected)
-					game_log(state, fmt.tprintf("paddle_hit ball=%d pos=[%.1f,%.1f]", bi, ball.pos.x, ball.pos.y))
-					if has_effect(state, .StickyPaddle) {
-						ball.locked = true
-						ball.lock_offset = ball.pos - state.paddle.pos
-						game_log(state, fmt.tprintf("sticky_catch ball=%d", bi))
-					}
+			// Paddle collision — curved top surface
+			paddle_hit, corrected_y := paddle_circle_contact(ball.circle, state.paddle.pos, paddle_half, pw)
+			if paddle_hit && ball.dir.y > 0 {
+				ball.pos.y = corrected_y
+				n := paddle_bounce_normal(ball.pos.x, state.paddle.pos.x, pw / 2)
+				reflected := glsl.reflect(ball.dir, n)
+				reflected.y = -abs(reflected.y) // always bounce upward
+				ball.dir = glsl.normalize(reflected)
+				game_log(state, fmt.tprintf("paddle_hit ball=%d pos=[%.1f,%.1f]", bi, ball.pos.x, ball.pos.y))
+				if has_effect(state, .StickyPaddle) {
+					ball.locked = true
+					ball.lock_offset = ball.pos - state.paddle.pos
+					particles_emit(ps, ball.pos, STICKY_CATCH_COUNT, STICKY_CATCH_EMIT)
+					game_log(state, fmt.tprintf("sticky_catch ball=%d", bi))
 				}
 			}
 
@@ -375,7 +441,9 @@ simulate_step :: proc(gs: ^GameState, run: ^RunState, state: ^LevelState, ps: ^P
 		state.drops[di].pos.y += ITEM_FALL_SPEED * dt
 
 		// Check paddle catch
-		if point_inside_rect(state.drops[di].pos, paddle_rect) {
+		item_circle := Circle{pos = state.drops[di].pos, radius = ITEM_SIZE.x / 2}
+		paddle_hit, _ := paddle_circle_contact(item_circle, state.paddle.pos, paddle_half, pw)
+		if paddle_hit {
 			game_log(state, fmt.tprintf("item_caught kind=%v", state.drops[di].kind))
 			apply_item_effect(run, state, state.drops[di].kind)
 			state.drop_count -= 1

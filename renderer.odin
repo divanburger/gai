@@ -101,7 +101,18 @@ Renderer :: struct {
 	clear_color:      Color,
 	font:             Font,
 	ui_font:          Font,
-	item_icons:       [ItemKind]Texture,
+	icons:            [Icon]Texture,
+}
+
+Icon :: enum {
+	Heart,
+	Circle,
+	ArrowsOut,
+	ArrowsIn,
+	Droplet,
+	ChevronRight,
+	PauseBars,
+	Fist,
 }
 
 compile_shader_program :: proc(vert_src, frag_src: string) -> (program: u32, ok: bool) {
@@ -267,22 +278,22 @@ renderer_init :: proc(r: ^Renderer) -> bool {
 		fmt.eprintln("renderer_init: failed to load UI font")
 	}
 
-	// Load or generate item icon textures
-	icon_paths := [ItemKind]string{
-		.ExtraLife    = "assets/icons/extra_life.png",
-		.ExtraBall   = "assets/icons/extra_ball.png",
-		.WidePaddle  = "assets/icons/wide_paddle.png",
-		.NarrowPaddle = "assets/icons/narrow_paddle.png",
-		.StickyPaddle = "assets/icons/sticky_paddle.png",
-		.FastBall    = "assets/icons/fast_ball.png",
-		.SlowBall    = "assets/icons/slow_ball.png",
+	// Load or generate icon textures
+	icon_paths := [Icon]string{
+		.Heart        = "assets/icons/heart.png",
+		.Circle       = "assets/icons/circle.png",
+		.ArrowsOut    = "assets/icons/arrows_out.png",
+		.ArrowsIn     = "assets/icons/arrows_in.png",
+		.Droplet      = "assets/icons/droplet.png",
+		.ChevronRight = "assets/icons/chevron_right.png",
+		.PauseBars    = "assets/icons/pause_bars.png",
+		.Fist         = "assets/icons/fist.png",
 	}
-	for kind in ItemKind {
-		if tex, tex_ok := texture_load_silent(icon_paths[kind]); tex_ok {
-			r.item_icons[kind] = tex
+	for icon in Icon {
+		if tex, tex_ok := texture_load_silent(icon_paths[icon]); tex_ok {
+			r.icons[icon] = tex
 		} else {
-			// Generate a simple procedural icon as fallback
-			r.item_icons[kind] = generate_item_icon(kind)
+			r.icons[icon] = generate_icon(icon)
 		}
 	}
 
@@ -338,8 +349,8 @@ renderer_destroy :: proc(r: ^Renderer) {
 	delete(r.calls)
 	font_destroy(&r.font)
 	font_destroy(&r.ui_font)
-	for kind in ItemKind {
-		texture_destroy(&r.item_icons[kind])
+	for icon in Icon {
+		texture_destroy(&r.icons[icon])
 	}
 }
 
@@ -574,15 +585,14 @@ texture_load_silent :: proc(path: string) -> (t: Texture, ok: bool) {
 	return t, true
 }
 
-// generate_item_icon creates a simple 16x16 white-on-transparent procedural icon
+// generate_icon creates a simple 20x20 white-on-transparent procedural icon
 // for use when PNG icons are not available.
-generate_item_icon :: proc(kind: ItemKind) -> Texture {
-	SIZE :: 16
+generate_icon :: proc(icon: Icon) -> Texture {
+	SIZE :: 20
 	pixels: [SIZE * SIZE * 4]u8
 
 	// Helper to set a pixel (white with full alpha)
 	set :: proc(pixels: ^[SIZE * SIZE * 4]u8, x, y: int) {
-		SIZE :: 16
 		if x < 0 || x >= SIZE || y < 0 || y >= SIZE { return }
 		idx := (y * SIZE + x) * 4
 		pixels[idx]     = 255
@@ -591,60 +601,65 @@ generate_item_icon :: proc(kind: ItemKind) -> Texture {
 		pixels[idx + 3] = 255
 	}
 
-	switch kind {
-	case .ExtraLife:
-		// Heart shape
+	C :: f32(SIZE - 1) / 2 // center (9.5 for 20)
+
+	switch icon {
+	case .Heart:
 		for y in 0..<SIZE {
 			for x in 0..<SIZE {
-				fx := f32(x) - 7.5
-				fy := f32(y) - 7.5
+				fx := f32(x) - C
+				fy := f32(y) - C
 				fx2 := fx * fx
-				fy_adj := fy + 2
-				heart := (fx2 + fy_adj * fy_adj - 20) * (fx2 + fy_adj * fy_adj - 20) * (fx2 + fy_adj * fy_adj - 20) - fx2 * fy_adj * fy_adj * fy_adj
+				fy_adj := fy + 2.5
+				r2 := fx2 + fy_adj * fy_adj - 30
+				heart := r2 * r2 * r2 - fx2 * fy_adj * fy_adj * fy_adj
 				if heart < 0 { set(&pixels, x, y) }
 			}
 		}
-	case .ExtraBall:
-		// Circle
+	case .Circle:
 		for y in 0..<SIZE {
 			for x in 0..<SIZE {
-				dx := f32(x) - 7.5
-				dy := f32(y) - 7.5
-				if dx*dx + dy*dy <= 25 { set(&pixels, x, y) }
+				dx := f32(x) - C
+				dy := f32(y) - C
+				if dx*dx + dy*dy <= 40 { set(&pixels, x, y) }
 			}
 		}
-	case .WidePaddle:
-		// Wide horizontal arrows pointing outward: <-->
-		for x in 3..<13 { set(&pixels, x, 7); set(&pixels, x, 8) }
-		set(&pixels, 4, 6); set(&pixels, 3, 7); set(&pixels, 4, 9)
-		set(&pixels, 11, 6); set(&pixels, 12, 7); set(&pixels, 11, 9)
-	case .NarrowPaddle:
-		// Narrow horizontal arrows pointing inward
-		for x in 3..<13 { set(&pixels, x, 7); set(&pixels, x, 8) }
-		set(&pixels, 5, 6); set(&pixels, 6, 7); set(&pixels, 5, 9)
-		set(&pixels, 10, 6); set(&pixels, 9, 7); set(&pixels, 10, 9)
-	case .StickyPaddle:
-		// Droplet / glue shape
+	case .ArrowsOut:
+		// Horizontal arrows pointing outward: <-->
+		for x in 4..<16 { set(&pixels, x, 9); set(&pixels, x, 10) }
+		set(&pixels, 5, 8); set(&pixels, 4, 9); set(&pixels, 5, 11)
+		set(&pixels, 14, 8); set(&pixels, 15, 9); set(&pixels, 14, 11)
+	case .ArrowsIn:
+		// Horizontal arrows pointing inward: -->  <--
+		for x in 4..<16 { set(&pixels, x, 9); set(&pixels, x, 10) }
+		set(&pixels, 6, 8); set(&pixels, 7, 9); set(&pixels, 6, 11)
+		set(&pixels, 13, 8); set(&pixels, 12, 9); set(&pixels, 13, 11)
+	case .Droplet:
 		for y in 0..<SIZE {
 			for x in 0..<SIZE {
-				dx := f32(x) - 7.5
-				dy := f32(y) - 7.5
-				if dy > 0 && dx*dx + dy*dy <= 20 { set(&pixels, x, y) }
-				if dy <= 0 && abs(dx) <= -dy * 0.6 + 2 { set(&pixels, x, y) }
+				dx := f32(x) - C
+				dy := f32(y) - C
+				if dy > 0 && dx*dx + dy*dy <= 30 { set(&pixels, x, y) }
+				if dy <= 0 && abs(dx) <= -dy * 0.6 + 2.5 { set(&pixels, x, y) }
 			}
 		}
-	case .FastBall:
+	case .ChevronRight:
 		// Double right chevron >>
-		for i in 0..<6 {
-			set(&pixels, 3 + i, 5 + i); set(&pixels, 3 + i, 11 - i)
-			set(&pixels, 7 + i, 5 + i); set(&pixels, 7 + i, 11 - i)
+		for i in 0..<7 {
+			set(&pixels, 4 + i, 6 + i); set(&pixels, 4 + i, 14 - i)
+			set(&pixels, 9 + i, 6 + i); set(&pixels, 9 + i, 14 - i)
 		}
-	case .SlowBall:
+	case .PauseBars:
 		// Pause bars ||
-		for y in 4..<12 {
-			set(&pixels, 5, y); set(&pixels, 6, y)
-			set(&pixels, 9, y); set(&pixels, 10, y)
+		for y in 5..<15 {
+			set(&pixels, 6, y); set(&pixels, 7, y); set(&pixels, 8, y)
+			set(&pixels, 11, y); set(&pixels, 12, y); set(&pixels, 13, y)
 		}
+	case .Fist:
+		// Fist / punch shape — knuckles on top, arm below
+		for x in 4..<16 { for y in 4..<9  { set(&pixels, x, y) } }  // knuckle row
+		for x in 5..<15 { for y in 9..<16 { set(&pixels, x, y) } }  // palm
+		for x in 7..<13 { set(&pixels, x, 3) }                      // top knuckle bumps
 	}
 
 	t: Texture

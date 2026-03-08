@@ -349,13 +349,17 @@ draw_options :: proc(r: ^Renderer, gs: ^GameState, settings: ^Settings, assets: 
 	ui_button_render(r, ui^, back_rect, option_labels[.Back], gs.options_focused == .Back)
 }
 
+OVERLAY_DIM :: Color{0, 0, 0, 0.85}
+
 draw_game_over :: proc(r: ^Renderer, run: ^RunState, state: ^LevelState) {
+	draw_rect(r, Rect{min = {}, max = GAME_SIZE}, OVERLAY_DIM)
 	draw_text(r, r.font, "GAME OVER", {GAME_SIZE.x / 2, GAME_SIZE.y / 2 - 60}, WHITE, .Center)
 	draw_text(r, r.font, fmt.tprintf("Score: %d", run.run_score + state.score), GAME_SIZE / 2, WHITE, .Center)
 	draw_text(r, r.font, "Press Enter to return to menu", {GAME_SIZE.x / 2, GAME_SIZE.y / 2 + 60}, WHITE, .Center)
 }
 
 draw_level_complete :: proc(r: ^Renderer, run: ^RunState, state: ^LevelState) {
+	draw_rect(r, Rect{min = {}, max = GAME_SIZE}, OVERLAY_DIM)
 	draw_text(r, r.font, "LEVEL COMPLETE!", {GAME_SIZE.x / 2, GAME_SIZE.y / 2 - 60}, YELLOW, .Center)
 	draw_text(r, r.font, fmt.tprintf("Level Score: %d", state.score), {GAME_SIZE.x / 2, GAME_SIZE.y / 2 - 10}, WHITE, .Center)
 	draw_text(r, r.font, fmt.tprintf("Total Score: %d", run.run_score + state.score), {GAME_SIZE.x / 2, GAME_SIZE.y / 2 + 30}, WHITE, .Center)
@@ -441,7 +445,7 @@ draw_paddle :: proc(r: ^Renderer, state: ^LevelState) {
 	for i in 0..=PADDLE_SLICES {
 		t := f32(i) / f32(PADDLE_SLICES) * 2.0 - 1.0
 		x := state.paddle.pos.x - paddle_half.x + f32(i) / f32(PADDLE_SLICES) * epw_render
-		y := state.paddle.pos.y - paddle_half.y - PADDLE_BOW_HEIGHT * (1.0 - t * t)
+		y := paddle_surface_y(state.paddle.pos.y, paddle_half.y, t)
 		paddle_pts[i] = {x, y}
 	}
 	for i in 0..=PADDLE_SLICES {
@@ -449,7 +453,7 @@ draw_paddle :: proc(r: ^Renderer, state: ^LevelState) {
 		y := state.paddle.pos.y + paddle_half.y
 		paddle_pts[PADDLE_SLICES + 1 + i] = {x, y}
 	}
-	draw_polygon(r, paddle_pts[:], WHITE)
+	draw_polygon(r, paddle_pts[:], state.paddle_tint)
 }
 
 draw_blocks :: proc(r: ^Renderer, state: ^LevelState, types: []BlockType) {
@@ -460,7 +464,7 @@ draw_blocks :: proc(r: ^Renderer, state: ^LevelState, types: []BlockType) {
 			br := block_rect(col, row)
 			draw_rect(r, br, block_color(b, types))
 			if b.type_idx >= 0 && b.type_idx < len(types) {
-				max_lives := types[b.type_idx].lives
+				max_lives := types[b.type_idx].hit_points
 				if b.lives < max_lives {
 					draw_block_damage(r, br, max_lives - b.lives)
 				}
@@ -472,11 +476,12 @@ draw_blocks :: proc(r: ^Renderer, state: ^LevelState, types: []BlockType) {
 // draw_item_icon draws a colored circle with an icon overlay at the given position and size.
 draw_item_icon :: proc(r: ^Renderer, kind: ItemKind, pos: vec2, size: f32) {
 	colors := ITEM_COLORS
+	icons  := ITEM_ICONS
 	draw_circle(r, Circle{pos = pos, radius = size / 2}, colors[kind])
-	icon := r.item_icons[kind]
-	if icon.id != 0 {
+	tex := r.icons[icons[kind]]
+	if tex.id != 0 {
 		half := vec2{size, size} * 0.5
-		draw_image(r, Rect{min = pos - half, max = pos + half}, icon, color_readable(colors[kind]))
+		draw_image(r, Rect{min = pos - half, max = pos + half}, tex, color_readable(colors[kind]))
 	}
 }
 
@@ -496,6 +501,7 @@ draw_effects_hud :: proc(r: ^Renderer, state: ^LevelState, ui: ^UI) {
 		.StickyPaddle = "STICKY",
 		.FastBall     = "FAST",
 		.SlowBall     = "SLOW",
+		.Punch        = "PUNCH",
 	}
 	has_any := false
 	for kind in ItemKind {
@@ -621,13 +627,17 @@ update :: proc(
 	}
 
 	// Draw calls
-	r.clear_color = DARK_GREY if gs.screen == .Playing else BLACK
+	r.clear_color = DARK_GREY if gs.screen == .Playing || gs.screen == .GameOver || gs.screen == .LevelComplete else BLACK
 
 	switch gs.screen {
 	case .MainMenu:      draw_main_menu(r, gs, ui^, assets, gs.elapsed)
 	case .Options:       draw_options(r, gs, settings, assets, gs.elapsed, ui, window)
-	case .GameOver:      draw_game_over(r, run, state)
-	case .LevelComplete: draw_level_complete(r, run, state)
+	case .GameOver:
+		draw_playing(r, gs, run, state, ps, types, ui, assets)
+		draw_game_over(r, run, state)
+	case .LevelComplete:
+		draw_playing(r, gs, run, state, ps, types, ui, assets)
+		draw_level_complete(r, run, state)
 	case .Playing:       draw_playing(r, gs, run, state, ps, types, ui, assets)
 	}
 }

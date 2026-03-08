@@ -21,6 +21,10 @@ Line :: struct {
 	start, end: vec2,
 }
 
+Polygon :: struct {
+	points: []vec2,
+}
+
 
 // Contact info between two rects.
 // separation: negative = penetrating, zero = touching, positive = gap.
@@ -71,6 +75,131 @@ rect_circle_contact :: proc(rect: Rect, circle: Circle) -> (separation: f32, nor
 	return
 }
 
+// Contact info between a polygon and a circle.
+// Tests each edge of the polygon as a line segment against the circle.
+// separation: negative = penetrating, zero = touching, positive = gap.
+// normal: direction to push circle out of polygon.
+polygon_circle_contact :: proc(poly: Polygon, circle: Circle) -> (separation: f32, normal: vec2) {
+	n := len(poly.points)
+	if n < 2 { return max(f32), {} }
+
+	best_sep := max(f32)
+	best_normal: vec2
+
+	for i in 0..<n {
+		a := poly.points[i]
+		b := poly.points[(i + 1) % n]
+
+		// Closest point on edge to circle center
+		edge   := b - a
+		edge_len_sq := glsl.dot(edge, edge)
+		t: f32
+		if edge_len_sq > 0 {
+			t = clamp(glsl.dot(circle.pos - a, edge) / edge_len_sq, 0, 1)
+		}
+		closest := a + edge * t
+
+		delta     := circle.pos - closest
+		delta_len := glsl.length(delta)
+		sep       := delta_len - circle.radius
+
+		if sep < best_sep {
+			best_sep = sep
+			if delta_len > 0 {
+				best_normal = delta / delta_len
+			} else {
+				// On the edge: use outward edge normal
+				best_normal = glsl.normalize(vec2{-edge.y, edge.x})
+			}
+		}
+	}
+
+	// If circle center is inside polygon, flip normal inward
+	if point_inside_polygon(circle.pos, poly.points) {
+		best_normal = -best_normal
+	}
+
+	return best_sep, best_normal
+}
+
+// Contact info between a polygon and a rect.
+// Tests polygon edges against the rect's closest point, and rect edges against polygon vertices.
+// separation: negative = penetrating, zero = touching, positive = gap.
+polygon_rect_contact :: proc(poly: Polygon, rect: Rect) -> (separation: f32, normal: vec2) {
+	// Treat as polygon vs polygon: convert rect to 4 corners
+	rect_pts := [4]vec2{
+		{rect.min.x, rect.min.y},
+		{rect.max.x, rect.min.y},
+		{rect.max.x, rect.max.y},
+		{rect.min.x, rect.max.y},
+	}
+	rect_poly := Polygon{points = rect_pts[:]}
+	return polygon_polygon_contact(poly, rect_poly)
+}
+
+// Contact info between two polygons using SAT (Separating Axis Theorem).
+// separation: negative = penetrating, zero = touching, positive = gap.
+// normal: direction to push b out of a.
+polygon_polygon_contact :: proc(a, b: Polygon) -> (separation: f32, normal: vec2) {
+	best_sep := min(f32)
+	best_normal: vec2
+
+	check_axes :: proc(poly, other: Polygon, best_sep: ^f32, best_normal: ^vec2, flip: bool) {
+		n := len(poly.points)
+		for i in 0..<n {
+			edge := poly.points[(i + 1) % n] - poly.points[i]
+			axis := vec2{-edge.y, edge.x}
+			axis_len := glsl.length(axis)
+			if axis_len == 0 { continue }
+			axis = axis / axis_len
+
+			min_a, max_a := project_polygon(poly, axis)
+			min_b, max_b := project_polygon(other, axis)
+
+			sep := max(min_a - max_b, min_b - max_a)
+			if sep > best_sep^ {
+				best_sep^ = sep
+				if min_a - max_b > min_b - max_a {
+					best_normal^ = -axis if flip else axis
+				} else {
+					best_normal^ = axis if flip else -axis
+				}
+			}
+		}
+	}
+
+	check_axes(a, b, &best_sep, &best_normal, false)
+	check_axes(b, a, &best_sep, &best_normal, true)
+	return best_sep, best_normal
+}
+
+// Project a polygon onto an axis, returning min and max scalar values.
+project_polygon :: proc(poly: Polygon, axis: vec2) -> (pmin, pmax: f32) {
+	pmin = max(f32)
+	pmax = min(f32)
+	for p in poly.points {
+		d := glsl.dot(p, axis)
+		pmin = min(pmin, d)
+		pmax = max(pmax, d)
+	}
+	return
+}
+
+// Test if a point is inside a polygon using ray casting (even-odd rule).
+point_inside_polygon :: proc(point: vec2, pts: []vec2) -> bool {
+	n := len(pts)
+	inside := false
+	j := n - 1
+	for i in 0..<n {
+		if (pts[i].y > point.y) != (pts[j].y > point.y) {
+			x_intersect := pts[i].x + (point.y - pts[i].y) / (pts[j].y - pts[i].y) * (pts[j].x - pts[i].x)
+			if point.x < x_intersect { inside = !inside }
+		}
+		j = i
+	}
+	return inside
+}
+
 point_inside_rect :: proc(point: vec2, r: Rect) -> bool {
 	return point.x >= r.min.x && point.x <= r.max.x &&
 	       point.y >= r.min.y && point.y <= r.max.y
@@ -93,6 +222,19 @@ move_toward_vector :: proc(current, target: $T/[$N]f32, speed, dt: f32) -> T {
 }
 
 move_toward :: proc { move_toward_scalar, move_toward_vector }
+
+color_mix :: proc(a, b: Color, t: f32) -> Color {
+	return a + (b - a) * t
+}
+
+lerp :: proc(a, b, t: f32) -> f32 {
+	return a + (b - a) * t
+}
+
+remap :: proc(value, in_min, in_max, out_min, out_max: f32) -> f32 {
+	t := (value - in_min) / (in_max - in_min)
+	return out_min + (out_max - out_min) * t
+}
 
 // Cut functions: slice off a strip from one side of a rect.
 // The input rect is shrunk in-place; the sliced-off strip is returned.

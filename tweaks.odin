@@ -12,11 +12,12 @@ BALL_SLOW_MULT :: f32(0.6)  // speed multiplier when SlowBall effect active
 BALL_SPLIT_ANGLE :: f32(10.0) // degrees offset for ball split
 
 // Paddle
-PADDLE_SIZE       :: vec2{144.0, 18.0}
+PADDLE_SIZE       :: vec2{144.0, 27.0}
 PADDLE_SPEED      :: 600.0
-PADDLE_Y          :: f32(GAME_HEIGHT) - 70.0
-PADDLE_BOW_HEIGHT :: f32(4)
+PADDLE_TOP_Y      :: f32(GAME_HEIGHT) - 70.0  // top surface Y; center is derived from size
+PADDLE_BOW_HEIGHT :: f32(8)
 PADDLE_SLICES     :: 20
+PADDLE_TINT_SPEED :: f32(8)  // speed of paddle color transition
 PADDLE_WIDE_MULT  :: f32(1.5)   // multiplier when WidePaddle effect active
 PADDLE_NARROW_MULT :: f32(0.7)  // multiplier when NarrowPaddle effect active
 
@@ -38,6 +39,18 @@ ITEM_DROP_CHANCE :: f32(0.25)
 ITEM_FALL_SPEED  :: f32(100)
 ITEM_SIZE        :: vec2{20, 20}
 
+// Item drop weights — relative probability of each item kind
+ITEM_DROP_WEIGHTS :: [ItemKind]f32{
+	.ExtraLife    = 1,
+	.ExtraBall    = 4,
+	.WidePaddle   = 6,
+	.NarrowPaddle = 4,
+	.StickyPaddle = 4,
+	.FastBall     = 4,
+	.SlowBall     = 4,
+	.Punch        = 2,
+}
+
 // Effect durations (seconds) — timed effects
 EFFECT_TIMER_EXTRA_BALL    :: f32(22.5)  // was 15
 EFFECT_TIMER_WIDE_PADDLE   :: f32(15.0)  // was 10
@@ -45,3 +58,4 @@ EFFECT_TIMER_NARROW_PADDLE :: f32(12.0)  // was 8
 EFFECT_TIMER_STICKY_PADDLE :: f32(18.0)  // was 12
 EFFECT_TIMER_FAST_BALL     :: f32(15.0)  // was 10
 EFFECT_TIMER_SLOW_BALL     :: f32(15.0)  // was 10
+EFFECT_TIMER_PUNCH         :: f32(10.0)  // ball punches through destroyed blocks
