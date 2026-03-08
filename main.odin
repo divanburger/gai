@@ -81,22 +81,7 @@ block_rect :: proc(col, row: int) -> Rect {
 
 apply_display_settings :: proc(window: ^SDL.Window, r: ^Renderer, s: Settings) {
 	resolutions := RESOLUTIONS
-	res := resolutions[s.resolution_idx]
-	switch s.display_mode {
-	case .Windowed:
-		SDL.SetWindowFullscreen(window, false)
-		SDL.SetWindowBordered(window, true)
-		SDL.SetWindowSize(window, res.x, res.y)
-	case .Borderless:
-		SDL.SetWindowFullscreen(window, false)
-		SDL.SetWindowBordered(window, false)
-		SDL.SetWindowSize(window, res.x, res.y)
-	case .Fullscreen:
-		SDL.SetWindowFullscreen(window, true)
-		// Viewport is updated when SDL fires WINDOW_RESIZED
-		return
-	}
-	renderer_set_window_size(r, res)
+	renderer_apply_display(r, window, s.display_mode, resolutions[s.resolution_idx])
 }
 
 Options :: struct {

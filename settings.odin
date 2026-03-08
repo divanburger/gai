@@ -5,23 +5,12 @@ import "core:os"
 
 SETTINGS_PATH :: "settings.json"
 
-DisplayMode :: enum { Windowed, Borderless, Fullscreen }
-
 RESOLUTIONS :: [5]ivec2{
 	{800,  600},
 	{1024, 768},
 	{1280, 720},
 	{1280, 960},
 	{1920, 1080},
-}
-
-display_mode_name :: proc(m: DisplayMode) -> string {
-	switch m {
-	case .Windowed:   return "Windowed"
-	case .Borderless: return "Borderless"
-	case .Fullscreen: return "Fullscreen"
-	}
-	return ""
 }
 
 Settings :: struct {

@@ -152,9 +152,9 @@ color_readable :: proc(bg: Color) -> Color {
 
 // Test if a moving circle (from `pos` to `pos + vel*dt`) intersects a line segment.
 // Returns the time of first intersection in [0, 1] (relative to dt), or -1 if no hit.
-line_circle_sweep :: proc(seg_a, seg_b: vec2, circle_pos, circle_vel: vec2, radius, dt: f32) -> f32 {
-	d   := seg_b - seg_a                 // segment direction
-	f   := circle_pos - seg_a            // vector from seg_a to circle center
+line_circle_sweep :: proc(seg: Line, circle_pos, circle_vel: vec2, radius, dt: f32) -> f32 {
+	d   := seg.end - seg.start           // segment direction
+	f   := circle_pos - seg.start        // vector from seg start to circle center
 	vel := circle_vel * dt               // displacement this frame
 
 	// Solve quadratic: |f + t*vel - proj_along_d|^2 = radius^2 projected onto segment normal
@@ -166,7 +166,7 @@ line_circle_sweep :: proc(seg_a, seg_b: vec2, circle_pos, circle_vel: vec2, radi
 	c := glsl.dot(f, f) - radius * radius
 
 	// Also need to clamp to segment endpoints — check distance from infinite line first,
-	// then verify the closest point on segment is within [seg_a, seg_b].
+	// then verify the closest point on segment is within [seg.start, seg.end].
 	seg_len_sq := glsl.dot(d, d)
 	if seg_len_sq == 0 {
 		// Degenerate segment: treat as point
@@ -199,7 +199,7 @@ line_circle_sweep :: proc(seg_a, seg_b: vec2, circle_pos, circle_vel: vec2, radi
 		t_enter := max(t1, f32(0))
 		// At t_enter, check if contact point falls within segment extent
 		contact_pos := circle_pos + circle_vel * dt * t_enter
-		proj := glsl.dot(contact_pos - seg_a, seg_dir)
+		proj := glsl.dot(contact_pos - seg.start, seg_dir)
 		seg_len := math.sqrt_f32(seg_len_sq)
 		if proj >= 0 && proj <= seg_len {
 			return t_enter
@@ -209,7 +209,7 @@ line_circle_sweep :: proc(seg_a, seg_b: vec2, circle_pos, circle_vel: vec2, radi
 
 	// Fallback: sweep against endpoint circles
 	best := f32(-1)
-	endpoints := [2]vec2{seg_a, seg_b}
+	endpoints := [2]vec2{seg.start, seg.end}
 	for i in 0..<2 {
 		ep  := endpoints[i]
 		g   := circle_pos - ep
@@ -225,4 +225,32 @@ line_circle_sweep :: proc(seg_a, seg_b: vec2, circle_pos, circle_vel: vec2, radi
 		}
 	}
 	return best
+}
+
+// Test if a moving circle sweeps into an axis-aligned rectangle.
+// Returns the time of first intersection in [0, 1] (relative to dt), or -1 if no hit.
+// Treats the rect as four line segments and returns the earliest hit.
+line_rect_sweep :: proc(rect: Rect, circle_pos, circle_vel: vec2, radius, dt: f32) -> (t: f32, normal: vec2) {
+	edges := [4]Line{
+		{start = {rect.min.x, rect.min.y}, end = {rect.max.x, rect.min.y}}, // top
+		{start = {rect.max.x, rect.min.y}, end = {rect.max.x, rect.max.y}}, // right
+		{start = {rect.max.x, rect.max.y}, end = {rect.min.x, rect.max.y}}, // bottom
+		{start = {rect.min.x, rect.max.y}, end = {rect.min.x, rect.min.y}}, // left
+	}
+	normals := [4]vec2{
+		{0, -1}, // top
+		{1,  0}, // right
+		{0,  1}, // bottom
+		{-1, 0}, // left
+	}
+	best := f32(-1)
+	best_normal := vec2{}
+	for edge, i in edges {
+		hit := line_circle_sweep(edge, circle_pos, circle_vel, radius, dt)
+		if hit >= 0 && (best < 0 || hit < best) {
+			best = hit
+			best_normal = normals[i]
+		}
+	}
+	return best, best_normal
 }

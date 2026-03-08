@@ -229,45 +229,59 @@ simulate_step :: proc(gs: ^GameState, run: ^RunState, state: ^LevelState, ps: ^P
 
 
 		speed := effective_ball_speed(state)
-		ball.pos += ball.dir * speed * dt
+		vel   := ball.dir * speed
 
-			// Block collision (one block per ball per step)
-			block_loop: for row in 0..<BLOCK_ROWS {
-				for col in 0..<BLOCK_COLS {
-					idx := row * BLOCK_COLS + col
-					if state.blocks[idx].lives <= 0 { continue }
-					rect := block_rect(col, row)
-					sep, normal := rect_circle_contact(rect, ball.circle)
-					if sep <= 0 {
-						state.blocks[idx].lives -= 1
-						state.score += SCORE_PER_BLOCK
-						ball.pos -= sep * normal
-						ball.dir = glsl.normalize(glsl.reflect(ball.dir, normal))
-						game_log(state, fmt.tprintf("block_hit col=%d row=%d lives_left=%d", col, row, state.blocks[idx].lives))
-						emit_color := block_color(state.blocks[idx], types)
-						center := (rect.min + rect.max) / 2
-						if state.blocks[idx].lives <= 0 {
-							game_log(state, fmt.tprintf("block_destroyed col=%d row=%d", col, row))
-							// Destroy particles: impactful burst
-							destroy_cfg := BLOCK_DESTROY_EMIT
-							destroy_cfg.color = emit_color
-							particles_emit(ps, center, BLOCK_DESTROY_COUNT, destroy_cfg)
-							if rand.float32() < ITEM_DROP_CHANCE && state.drop_count < MAX_DROPS {
-								kind := ItemKind(rand.int31_max(i32(len(ItemKind))))
-								state.drops[state.drop_count] = ItemDrop{pos = center, kind = kind, active = true}
-								state.drop_count += 1
-								game_log(state, fmt.tprintf("item_spawned kind=%v pos=[%.1f,%.1f]", kind, center.x, center.y))
-							}
-						} else {
-							// Hit particles: subtle feedback
-							hit_cfg := BLOCK_HIT_EMIT
-							hit_cfg.color = emit_color
-							particles_emit(ps, center, BLOCK_HIT_COUNT, hit_cfg)
-						}
-						break block_loop
-					}
+		// Block collision via sweep (one block per ball per step)
+		best_t      := f32(-1)
+		best_normal := vec2{}
+		best_col, best_row := -1, -1
+		for row in 0..<BLOCK_ROWS {
+			for col in 0..<BLOCK_COLS {
+				idx := row * BLOCK_COLS + col
+				if state.blocks[idx].lives <= 0 { continue }
+				rect := block_rect(col, row)
+				t, normal := line_rect_sweep(rect, ball.pos, vel, ball.radius, dt)
+				if t >= 0 && (best_t < 0 || t < best_t) {
+					best_t      = t
+					best_normal = normal
+					best_col    = col
+					best_row    = row
 				}
 			}
+		}
+
+		if best_t >= 0 {
+			// Move to contact point, reflect, then continue remaining time
+			ball.pos += vel * (best_t * dt)
+			ball.dir = glsl.normalize(glsl.reflect(ball.dir, best_normal))
+			remaining := (1 - best_t) * dt
+			ball.pos += ball.dir * speed * remaining
+
+			idx := best_row * BLOCK_COLS + best_col
+			state.blocks[idx].lives -= 1
+			state.score += SCORE_PER_BLOCK
+			game_log(state, fmt.tprintf("block_hit col=%d row=%d lives_left=%d", best_col, best_row, state.blocks[idx].lives))
+			emit_color := block_color(state.blocks[idx], types)
+			center := center_of_rect(block_rect(best_col, best_row))
+			if state.blocks[idx].lives <= 0 {
+				game_log(state, fmt.tprintf("block_destroyed col=%d row=%d", best_col, best_row))
+				destroy_cfg := BLOCK_DESTROY_EMIT
+				destroy_cfg.color = emit_color
+				particles_emit(ps, center, BLOCK_DESTROY_COUNT, destroy_cfg)
+				if rand.float32() < ITEM_DROP_CHANCE && state.drop_count < MAX_DROPS {
+					kind := ItemKind(rand.int31_max(i32(len(ItemKind))))
+					state.drops[state.drop_count] = ItemDrop{pos = center, kind = kind, active = true}
+					state.drop_count += 1
+					game_log(state, fmt.tprintf("item_spawned kind=%v pos=[%.1f,%.1f]", kind, center.x, center.y))
+				}
+			} else {
+				hit_cfg := BLOCK_HIT_EMIT
+				hit_cfg.color = emit_color
+				particles_emit(ps, center, BLOCK_HIT_COUNT, hit_cfg)
+			}
+		} else {
+			ball.pos += vel * dt
+		}
 
 			// Paddle collision — curved top surface matching visual bow
 			// First check broad rect, then refine with curve

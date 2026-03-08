@@ -289,6 +289,35 @@ renderer_init :: proc(r: ^Renderer) -> bool {
 	return true
 }
 
+DisplayMode :: enum { Windowed, Borderless, Fullscreen }
+
+display_mode_name :: proc(m: DisplayMode) -> string {
+	switch m {
+	case .Windowed:   return "Windowed"
+	case .Borderless: return "Borderless"
+	case .Fullscreen: return "Fullscreen"
+	}
+	return ""
+}
+
+renderer_apply_display :: proc(r: ^Renderer, window: ^SDL.Window, mode: DisplayMode, resolution: ivec2) {
+	switch mode {
+	case .Windowed:
+		SDL.SetWindowFullscreen(window, false)
+		SDL.SetWindowBordered(window, true)
+		SDL.SetWindowSize(window, resolution.x, resolution.y)
+	case .Borderless:
+		SDL.SetWindowFullscreen(window, false)
+		SDL.SetWindowBordered(window, false)
+		SDL.SetWindowSize(window, resolution.x, resolution.y)
+	case .Fullscreen:
+		SDL.SetWindowFullscreen(window, true)
+		// Viewport is updated when SDL fires WINDOW_RESIZED
+		return
+	}
+	renderer_set_window_size(r, resolution)
+}
+
 renderer_set_window_size :: proc(r: ^Renderer, size: ivec2) {
 	r.window_size = size
 	scale := min(f32(size.x) / GAME_SIZE.x, f32(size.y) / GAME_SIZE.y)
