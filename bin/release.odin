@@ -42,90 +42,80 @@ release :: proc() -> bool {
 	// Clean build dir
 	if os.exists(BUILD_DIR) {
 		fmt.println("Cleaning build directory...")
-		err := os.remove_all(BUILD_DIR)
-		if err != nil {
-			fmt.eprintln("Failed to remove build directory:", err)
-			return false
-		}
+		remove_all(BUILD_DIR) or_return
 	}
 
-	// Create game dir
-	{
-		err := os.make_directory_all(GAME_DIR)
-		if err != nil {
-			fmt.eprintln("Failed to create game directory:", err)
-			return false
-		}
-	}
+	make_dir(GAME_DIR) or_return
 
 	// Build binary
 	fmt.println("Building binary...")
-	{
-		state, _, stderr, err := os.process_exec(
-			{command = {ODIN, "build", ".", "-o:speed", "-out:" + OUT_BIN}},
-			context.allocator,
-		)
-		if err != nil {
-			fmt.eprintln("Failed to start build:", err)
-			return false
-		}
-		if state.exit_code != 0 {
-			fmt.eprintln("Build failed (exit code", state.exit_code, ")")
-			fmt.eprint(string(stderr))
-			return false
-		}
-	}
+	run("build", {command = {ODIN, "build", ".", "-o:speed", "-out:" + OUT_BIN}}) or_return
 	fmt.println("Build OK")
 
 	// Copy assets
 	fmt.println("Copying assets...")
 	for asset in ASSETS {
-		dst := fmt.tprintf("%s/%s", GAME_DIR, asset)
-		dst_dir := filepath.dir(dst, context.temp_allocator)
-		os.make_directory_all(dst_dir)
-
-		data, read_err := os.read_entire_file(asset, context.temp_allocator)
-		if read_err != nil {
-			fmt.eprintln("Failed to read:", asset, read_err)
-			return false
-		}
-
-		write_err := os.write_entire_file(dst, data)
-		if write_err != nil {
-			fmt.eprintln("Failed to write:", dst, write_err)
-			return false
-		}
+		copy_file(asset, fmt.tprintf("%s/%s", GAME_DIR, asset)) or_return
 	}
 	fmt.println("Copied", len(ASSETS), "files")
 
 	// Create archive
 	fmt.println("Creating archive...")
-	{
-		state, _, stderr, err := os.process_exec(
-			{
-				command = {"tar", "czf", ARCHIVE_NAME, GAME_NAME + "/"},
-				working_dir = BUILD_DIR,
-			},
-			context.allocator,
-		)
-		if err != nil {
-			fmt.eprintln("Failed to start tar:", err)
-			return false
-		}
-		if state.exit_code != 0 {
-			fmt.eprintln("tar failed (exit code", state.exit_code, ")")
-			fmt.eprint(string(stderr))
-			return false
-		}
-	}
+	run("tar", {command = {"tar", "czf", ARCHIVE_NAME, GAME_NAME + "/"}, working_dir = BUILD_DIR}) or_return
 
 	// Report
 	info, stat_err := os.stat(ARCHIVE_PATH, context.temp_allocator)
 	if stat_err != nil {
-		fmt.eprintln("Failed to stat zip:", stat_err)
+		fmt.eprintln("Failed to stat archive:", stat_err)
 		return false
 	}
-	size_mb := f64(info.size) / (1024 * 1024)
-	fmt.printf("Created %s (%.1f MB)\n", ARCHIVE_PATH, size_mb)
+	fmt.printf("Created %s (%.1f MB)\n", ARCHIVE_PATH, f64(info.size) / (1024 * 1024))
+	return true
+}
+
+run :: proc(label: string, desc: os.Process_Desc) -> bool {
+	state, _, stderr, err := os.process_exec(desc, context.allocator)
+	if err != nil {
+		fmt.eprintln("Failed to start", label, ":", err)
+		return false
+	}
+	if state.exit_code != 0 {
+		fmt.eprintf("%s failed (exit code %d)\n", label, state.exit_code)
+		fmt.eprint(string(stderr))
+		return false
+	}
+	return true
+}
+
+copy_file :: proc(src, dst: string) -> bool {
+	make_dir(filepath.dir(dst, context.temp_allocator))
+	data, read_err := os.read_entire_file(src, context.temp_allocator)
+	if read_err != nil {
+		fmt.eprintln("Failed to read:", src, read_err)
+		return false
+	}
+	write_err := os.write_entire_file(dst, data)
+	if write_err != nil {
+		fmt.eprintln("Failed to write:", dst, write_err)
+		return false
+	}
+	return true
+}
+
+remove_all :: proc(path: string) -> bool {
+	err := os.remove_all(path)
+	if err != nil {
+		fmt.eprintln("Failed to remove:", path, err)
+		return false
+	}
+	return true
+}
+
+make_dir :: proc(path: string) -> bool {
+	err := os.make_directory_all(path)
+	if err != nil && err != .Exist {
+		fmt.eprintln("Failed to create directory:", path, err)
+		return false
+	}
 	return true
 }
